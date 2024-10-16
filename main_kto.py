@@ -121,7 +121,7 @@ for round in tqdm(range(fed_args.num_rounds)):
         new_lr = cosine_learning_rate(
             round, fed_args.num_rounds, script_args.learning_rate, 1e-5
         )  # manually schedule the learning rate
-        training_args = get_kto_training_args(script_args, new_lr, dataset)
+        training_args = get_kto_training_args(script_args, new_lr, sub_dataset)
 
         # ===== Train local model on the client side =====
         trainer = get_fed_local_kto_trainer(
