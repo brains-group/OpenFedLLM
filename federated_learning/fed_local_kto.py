@@ -10,7 +10,6 @@ def get_fed_local_kto_trainer(script_args, fed_args, model, model_ref, tokenizer
                             model=model,
                             ref_model=model_ref,
                             args=training_args,
-                            beta=script_args.kto_beta,
                             train_dataset=local_dataset,
                             tokenizer=tokenizer,
                             global_state=global_dict,
@@ -21,7 +20,6 @@ def get_fed_local_kto_trainer(script_args, fed_args, model, model_ref, tokenizer
                             model=model,
                             ref_model=model_ref,
                             args=training_args,
-                            beta=script_args.kto_beta,
                             train_dataset=local_dataset,
                             tokenizer=tokenizer,
                             global_state=global_dict,
@@ -34,7 +32,6 @@ def get_fed_local_kto_trainer(script_args, fed_args, model, model_ref, tokenizer
                             model=model,
                             ref_model=model_ref,
                             args=training_args,
-                            beta=script_args.kto_beta,
                             train_dataset=local_dataset,
                             tokenizer=tokenizer,
                             )
