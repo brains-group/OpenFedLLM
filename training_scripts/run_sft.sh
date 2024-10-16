@@ -15,7 +15,7 @@ dataset_sample=20000
 model_name_or_path="meta-llama/Llama-2-7b-hf"
 output_dir=./output
 
-gpu=2
+gpu=0
 fed_alg="fedavg"
 
 CUDA_VISIBLE_DEVICES=$gpu python main_sft.py \

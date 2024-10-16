@@ -7,7 +7,7 @@ evaluation/open_ended/data/*/model_judgment/*
 
 debug.py
 
-output/
+output
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
