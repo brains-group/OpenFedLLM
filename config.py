@@ -4,7 +4,6 @@ from transformers import (
     HfArgumentParser,
     TrainingArguments,
     BitsAndBytesConfig,
-    KTOConfig,
 )
 from peft import LoraConfig
 import os
