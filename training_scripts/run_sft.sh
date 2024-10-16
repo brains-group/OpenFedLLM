@@ -38,5 +38,6 @@ CUDA_VISIBLE_DEVICES=$gpu python main_sft.py \
  --output_dir $output_dir \
  --template "alpaca" \
  --dp True \
- --noise_multiplier 1e-4 \
+ --epsilon 1e-4 \
+ --delta 1e-5 \
  --max_gradient_norm 1.0 \

@@ -65,8 +65,9 @@ class ScriptArguments:
     # Add extra arguments regarding differential privacy
     dp: Optional[bool] = field(default=False, metadata={"help": "Add differential privacy"})
     max_gradient_norm: Optional[float] = field(default=1.0, metadata={"help": "Max gradient norm for differential privacy"})
-    noise_multiplier: Optional[float] = field(default=1.0, metadata={"help": "Noise multiplier for differential privacy"})
-
+    #noise_multiplier: Optional[float] = field(default=1.0, metadata={"help": "Noise multiplier for differential privacy"})
+    epsilon: Optional[float] = field(default=1.0, metadata={"help": "Epsilon for differential privacy"})
+    delta: Optional[float] = field(default=1e-5, metadata={"help": "Delta for differential privacy"})
 
 parser = HfArgumentParser((ScriptArguments, FedArguments))
 script_args, fed_args = parser.parse_args_into_dataclasses()
