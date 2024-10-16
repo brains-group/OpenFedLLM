@@ -52,7 +52,7 @@ class FedArguments:
         default=0.99, metadata={"help": "the beta2 parameter of FedYogi and FedAdam"}
     )
     save_model_freq: Optional[int] = field(
-        default=50,
+        default=3,
         metadata={
             "help": "the frequency to save the model. 50 means save every 50 rounds"
         },

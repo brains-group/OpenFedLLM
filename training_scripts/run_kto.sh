@@ -1,6 +1,6 @@
 gpu=0
 max_steps=10
-num_rounds=200
+num_rounds=3
 batch_size=16
 gradient_accumulation_steps=1
 seq_length=512
