@@ -193,7 +193,11 @@ def get_training_args(script_args, new_lr):
     return training_args
 
 
-def get_kto_training_args(script_args, new_lr):
+def get_kto_training_args(script_args, new_lr, dataset=None):
+    desirable_weight = 1
+    if dataset is not None:
+        numDesirable = sum(dataset["label"])
+        desirable_weight = (dataset.num_rows - numDesirable) / numDesirable
     training_args = KTOConfig(
         output_dir=script_args.output_dir,
         per_device_train_batch_size=script_args.batch_size,
@@ -210,6 +214,7 @@ def get_kto_training_args(script_args, new_lr):
         gradient_checkpointing=script_args.gradient_checkpointing,
         lr_scheduler_type="constant",
         beta=script_args.kto_beta,
+        desirable_weight=desirable_weight,
     )
     return training_args
 
