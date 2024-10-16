@@ -13,11 +13,11 @@ from peft import get_peft_model, get_peft_model_state_dict, set_peft_model_state
 
 from utils import *
 from federated_learning import *
-from config import get_config, save_config, get_model_config, get_kto_training_args
+from config import get_config, save_config, get_model_config, get_training_args
 
 # ===== Define the arguments =====
 script_args, fed_args, peft_config = get_config()
-training_args = get_kto_training_args(script_args, script_args.learning_rate)
+training_args = get_training_args(script_args, script_args.learning_rate)
 save_config(script_args, fed_args)
 print(script_args, fed_args)
 
@@ -97,7 +97,7 @@ for round in tqdm(range(fed_args.num_rounds)):
 
         sub_dataset = get_dataset_this_round(local_datasets[client], round, fed_args, script_args)      # get the required sub-dataset for this round
         new_lr = cosine_learning_rate(round, fed_args.num_rounds, script_args.learning_rate, 1e-5)      # manually schedule the learning rate
-        training_args = get_kto_training_args(script_args, new_lr)
+        training_args = get_training_args(script_args, new_lr)
 
         # ===== Train local model on the client side =====
         trainer = get_fed_local_kto_trainer(
