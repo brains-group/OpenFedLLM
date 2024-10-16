@@ -3,16 +3,25 @@ pragma solidity ^0.8.0;
 
 contract FederatedLearningAggregator {
     address public owner;
+    string public modelURI;
+    string public modelVersion;
     uint256 public numClients;
     uint256 public totalClients;
+    uint256 public trainingRounds;
+    uint256 public currentRound;
     mapping(address => bool) public hasSubmitted;
     mapping(address => uint256[]) public clientUpdates;
-    mapping(address => uint256) public clientSampleSizes; // New: stores sample size for each client
+    mapping(address => uint256) public clientSampleSizes;
     uint256[] public globalModel;
 
     event ModelSubmitted(address indexed client, uint256[] parameters, uint256 sampleSize);
     event ModelAggregated(uint256[] globalModel);
     event ResetForNextRound();
+    event ResetFederatedLearning();
+    event TrainingRoundsSet(uint256 rounds);
+    event GlobalModelSet(uint256[] newGlobalModel);
+    event ModelURIUpdated(string newModelURI, string newVersion);
+    //event ModelURIRetrieved(address indexed client, string modelURI, string modelVersion);
 
     constructor(uint256 _totalClients) {
         owner = msg.sender;
@@ -40,7 +49,6 @@ contract FederatedLearningAggregator {
 
         emit ModelSubmitted(msg.sender, parameters, sampleSize);
 
-        // If all clients have submitted, trigger aggregation
         if (numClients == totalClients) {
             aggregateModels();
         }
@@ -51,15 +59,13 @@ contract FederatedLearningAggregator {
         uint256[] memory aggregatedParams = new uint256[](paramCount);
         uint256 totalSamples = 0;
 
-        // Calculate the total number of samples
         for (uint256 i = 0; i < totalClients; i++) {
-            address client = msg.sender; // iterate over actual client addresses in real implementation
+            address client = msg.sender; // Replace with actual client address iteration in real implementation
             totalSamples += clientSampleSizes[client];
         }
 
-        // Weighted average of parameters
         for (uint256 i = 0; i < totalClients; i++) {
-            address client = msg.sender; // iterate over actual client addresses in real implementation
+            address client = msg.sender; // Replace with actual client address iteration in real implementation
             uint256[] memory clientParams = clientUpdates[client];
             uint256 clientSampleSize = clientSampleSizes[client];
 
@@ -71,19 +77,23 @@ contract FederatedLearningAggregator {
         globalModel = aggregatedParams;
         emit ModelAggregated(globalModel);
 
-        // Reset for the next round
-        resetForNextRound();
+        currentRound++;
+        if (currentRound < trainingRounds) {
+            resetForNextRound();
+        } else {
+            emit ResetFederatedLearning();
+        }
     }
 
     function resetForNextRound() internal {
         for (uint256 i = 0; i < totalClients; i++) {
-            address client = msg.sender; // iterate over actual client addresses in real implementation
+            address client = msg.sender; // Replace with actual client address iteration in real implementation
             hasSubmitted[client] = false;
             delete clientUpdates[client];
             delete clientSampleSizes[client];
         }
         numClients = 0;
-        
+
         emit ResetForNextRound();
     }
 
@@ -93,5 +103,43 @@ contract FederatedLearningAggregator {
 
     function setTotalClients(uint256 _totalClients) public onlyOwner {
         totalClients = _totalClients;
+    }
+
+    function setTrainingRounds(uint256 _rounds) public onlyOwner {
+        require(_rounds > 0, "Training rounds must be greater than zero");
+        trainingRounds = _rounds;
+        emit TrainingRoundsSet(_rounds);
+    }
+
+    function resetFederatedLearning() public onlyOwner {
+        delete globalModel;
+        numClients = 0;
+        currentRound = 0;
+        for (uint256 i = 0; i < totalClients; i++) {
+            address client = msg.sender; // Replace with actual client address iteration in real implementation
+            hasSubmitted[client] = false;
+            delete clientUpdates[client];
+            delete clientSampleSizes[client];
+        }
+        emit ResetFederatedLearning();
+    }
+
+    function setGlobalModel(uint256[] memory newGlobalModel) public onlyOwner {
+        require(newGlobalModel.length > 0, "Global model cannot be empty");
+        globalModel = newGlobalModel;
+        emit GlobalModelSet(newGlobalModel);
+    }
+
+    // Allows the owner to update the model URI and version
+    function updateModelURI(string memory newModelURI, string memory newVersion) public onlyOwner {
+        modelURI = newModelURI;
+        modelVersion = newVersion;
+        emit ModelURIUpdated(newModelURI, newVersion);
+    }
+
+    // Allows clients to retrieve the model URI and version
+    function getModelURI() public view returns (string memory, string memory) {
+        //emit ModelURIRetrieved(msg.sender, modelURI, modelVersion);
+        return (modelURI, modelVersion);
     }
 }
