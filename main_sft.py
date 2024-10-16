@@ -95,13 +95,12 @@ for round in tqdm(range(fed_args.num_rounds)):
         if script_args.dp:
             privacy_engine = PrivacyEngine(
                 model,
-                batch_size = script_args.batch_size,
-                sample_size = len(dataset),
-                epochs = script_args.num_train_epochs,
                 target_epsilon = script_args.epsilon,
                 target_delta = script_args.delta,
                 max_grad_norm = script_args.max_gradient_norm
             )
+            # privacy_engine = PrivacyEngine()
+            
             privacy_engine.attach(optimizer)
 
         # ===== Train local model on the client side =====
