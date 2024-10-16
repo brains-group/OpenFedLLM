@@ -62,6 +62,12 @@ class ScriptArguments:
     dataset_sample: Optional[int] = field(default=20000, metadata={"help": "the number of samples to use from the dataset"})
     local_data_dir: Optional[str] = field(default=None, metadata={"help": "the local data directory if you want to use downloaded data"})
 
+    # Add extra arguments regarding differential privacy
+    dp: Optional[bool] = field(default=False, metadata={"help": "Add differential privacy"})
+    max_gradient_norm: Optional[float] = field(default=1.0, metadata={"help": "Max gradient norm for differential privacy"})
+    noise_multiplier: Optional[float] = field(default=1.0, metadata={"help": "Noise multiplier for differential privacy"})
+
+
 parser = HfArgumentParser((ScriptArguments, FedArguments))
 script_args, fed_args = parser.parse_args_into_dataclasses()
 

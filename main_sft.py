@@ -11,6 +11,9 @@ from utils import *
 from federated_learning import *
 from config import get_config, save_config, get_model_config, get_training_args
 
+from opacus import PrivacyEngine
+from transformers import AdamW
+
 # ===== Define the arguments =====
 script_args, fed_args, peft_config = get_config()
 training_args = get_training_args(script_args, script_args.learning_rate)
@@ -59,7 +62,7 @@ global_auxiliary, auxiliary_model_list, auxiliary_delta_dict = get_auxiliary_dic
 tokenizer = AutoTokenizer.from_pretrained(script_args.model_name_or_path, use_fast=False, padding_side="right")
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.unk_token   # following vicuna
-
+    
 # ===== Define the formatting function (cater to TRL SFTTrainer)=====
 formatting_prompts_func, response_template = get_formatting_prompts_func(script_args.template, tokenizer.eos_token)
 response_template_ids = tokenizer.encode(response_template, add_special_tokens=False)[2:]   # Now we have it like in the dataset texts: `[2277, 29937, 4007, 22137, 29901]` for Llama2
@@ -86,6 +89,21 @@ for round in tqdm(range(fed_args.num_rounds)):
         new_lr = cosine_learning_rate(round, fed_args.num_rounds, script_args.learning_rate, 1e-6)      # manually schedule the learning rate
         training_args = get_training_args(script_args, new_lr)
 
+        # ===== Before training, add differential privacy if needed =====
+        optimizer = AdamW(model.parameters(), lr=new_lr)
+        
+        if script_args.dp:
+            privacy_engine = PrivacyEngine(
+                model,
+                batch_size = script_args.batch_size,
+                sample_size = len(dataset),
+                epochs = script_args.num_train_epochs,
+                target_epsilon = script_args.epsilon,
+                target_delta = script_args.delta,
+                max_grad_norm = script_args.max_grad_norm
+            )
+            privacy_engine.attach(optimizer)
+
         # ===== Train local model on the client side =====
         trainer = get_fed_local_sft_trainer(
             model=model,
@@ -99,6 +117,7 @@ for round in tqdm(range(fed_args.num_rounds)):
             script_args=script_args,
             local_auxiliary=auxiliary_model_list[client],
             global_auxiliary=global_auxiliary,
+            optimizer=optimizer
         )
 
         results = trainer.train()
