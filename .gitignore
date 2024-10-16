@@ -1,6 +1,6 @@
 training_scripts/*
-!training_scripts/run_sft.sh
-!training_scripts/run_dpo.sh
+#!training_scripts/run_sft.sh
+#!training_scripts/run_dpo.sh
 
 evaluation/open_ended/data/*/model_answer/*
 evaluation/open_ended/data/*/model_judgment/*
