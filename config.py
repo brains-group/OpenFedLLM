@@ -5,6 +5,7 @@ from transformers import (
     TrainingArguments,
     BitsAndBytesConfig,
 )
+from trl import KTOConfig
 from peft import LoraConfig
 import os
 import json
@@ -188,6 +189,27 @@ def get_training_args(script_args, new_lr):
         hub_model_id=script_args.hub_model_id,
         gradient_checkpointing=script_args.gradient_checkpointing,
         lr_scheduler_type="constant",
+    )
+    return training_args
+
+
+def get_kto_training_args(script_args, new_lr):
+    training_args = KTOConfig(
+        output_dir=script_args.output_dir,
+        per_device_train_batch_size=script_args.batch_size,
+        gradient_accumulation_steps=script_args.gradient_accumulation_steps,
+        learning_rate=new_lr,
+        logging_steps=script_args.logging_steps,
+        num_train_epochs=script_args.num_train_epochs,
+        max_steps=script_args.max_steps,
+        report_to=script_args.log_with,
+        save_steps=script_args.save_steps,
+        save_total_limit=script_args.save_total_limit,
+        push_to_hub=script_args.push_to_hub,
+        hub_model_id=script_args.hub_model_id,
+        gradient_checkpointing=script_args.gradient_checkpointing,
+        lr_scheduler_type="constant",
+        beta=script_args.kto_beta,
     )
     return training_args
 
