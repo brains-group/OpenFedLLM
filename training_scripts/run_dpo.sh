@@ -1,4 +1,4 @@
-gpu=2
+gpu=0
 max_steps=10
 num_rounds=200
 batch_size=16
