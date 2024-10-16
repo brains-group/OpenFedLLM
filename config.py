@@ -59,6 +59,7 @@ class ScriptArguments:
     template: Optional[str] = field(default="alpaca", metadata={"help": "the template to use"})
     seed: Optional[int] = field(default=2023, metadata={"help": "the seed to use"})
     dpo_beta: Optional[float] = field(default=0.1, metadata={"help": "the beta parameter of DPO"})
+    kto_beta: Optional[float] = field(default=0.1, metadata={"help": "the beta parameter of KTO"})
     dataset_sample: Optional[int] = field(default=20000, metadata={"help": "the number of samples to use from the dataset"})
     local_data_dir: Optional[str] = field(default=None, metadata={"help": "the local data directory if you want to use downloaded data"})
 
