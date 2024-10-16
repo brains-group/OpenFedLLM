@@ -100,7 +100,7 @@ for round in tqdm(range(fed_args.num_rounds)):
                 epochs = script_args.num_train_epochs,
                 target_epsilon = script_args.epsilon,
                 target_delta = script_args.delta,
-                max_grad_norm = script_args.max_grad_norm
+                max_grad_norm = script_args.max_gradient_norm
             )
             privacy_engine.attach(optimizer)
 
