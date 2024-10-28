@@ -1,7 +1,6 @@
 gpu=0
 max_steps=10
-num_rounds=3
-save_model_freq=$num_rounds
+num_rounds=200
 batch_size=16
 gradient_accumulation_steps=1
 seq_length=512
@@ -34,4 +33,3 @@ CUDA_VISIBLE_DEVICES=$gpu python main_kto.py \
  --load_in_8bit \
  --output_dir $output_dir \
  --template "vicuna_v1.1" \
- --save_model_freq $save_model_freq \
