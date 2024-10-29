@@ -16,7 +16,7 @@ model_name_or_path="meta-llama/Llama-2-7b-hf"
 output_dir=./output
 
 gpu=0
-fed_alg="fedavg"
+fed_alg="dp-alg"
 
 CUDA_VISIBLE_DEVICES=$gpu python main_sft.py \
  --learning_rate $lr \
@@ -37,7 +37,8 @@ CUDA_VISIBLE_DEVICES=$gpu python main_sft.py \
  --load_in_8bit \
  --output_dir $output_dir \
  --template "alpaca" \
- --dp True \
- --epsilon 1e-4 \
- --delta 1e-5 \
- --max_gradient_norm 1.0 \
+ --use_dp True \
+ --per_sample_max_grad_norm 1.2 \
+ --noise_multiplier 0.2 \
+ --target_epsilon 1e-3 \
+ --target_delta 1e-5 \
