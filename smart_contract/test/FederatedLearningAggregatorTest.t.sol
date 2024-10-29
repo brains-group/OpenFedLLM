@@ -19,7 +19,7 @@ contract FederatedLearningAggregatorTest is Test {
         clients.push(address(0x3000)); // Mock client 3
     }
 
-    function testSubmitAndAggregate() public {
+    function testSubmitAndAggregate_small_module() public {
         // Fake data for three clients
         // Client 1 submits [1.2, 2.5] with sample size 10
         uint256[] memory parameters1 = new uint256[](2);
@@ -52,11 +52,58 @@ contract FederatedLearningAggregatorTest is Test {
         // Expected weighted average for parameter 1:
         // (2.5 * 0.2) + (3.1 * 0.3) + (2.9 * 0.5) = 2.88
 
-        // Retrieve the aggregated global model (should be automatically aggregated)
+        // Retrieve the aggregated global model 
         UD60x18[] memory globalModel = aggregator.getGlobalModel();
         
         // Assert that the aggregated global model matches our expected values
-        assertApproxEqAbs(unwrap(globalModel[0]), 1.8e18, 0, "Parameter 0 aggregated incorrectly"); // Allow for minor precision loss
+        assertApproxEqAbs(unwrap(globalModel[0]), 1.8e18, 0, "Parameter 0 aggregated incorrectly"); 
         assertApproxEqAbs(unwrap(globalModel[1]), 2.88e18, 0, "Parameter 1 aggregated incorrectly");
+    }
+
+    function testSubmitAndAggregateLargeParameters_large_module() public {
+        // Define larger parameter arrays for each client
+        uint256[] memory parameters1 = new uint256[](10);  
+        uint256[] memory parameters2 = new uint256[](10);
+        uint256[] memory parameters3 = new uint256[](10);     
+
+        // Client 1 submits [1.1, 2.2, 3.3, 4.4, ..., 10.0] with sample size 20
+        for (uint256 i = 0; i < 10; i++) {
+            parameters1[i] = ud((i + 1) * 1.1e18).unwrap();
+        }
+        vm.prank(clients[0]);
+        aggregator.submitModel(parameters1, 20);
+
+        // Client 2 submits [2.1, 3.2, 4.3, 5.4, ..., 11.0] with sample size 30
+        for (uint256 i = 0; i < 10; i++) {
+            parameters2[i] = ud((i + 1) * 2.1e18).unwrap();
+        }
+        vm.prank(clients[1]);
+        aggregator.submitModel(parameters2, 30);
+
+        // Client 3 submits [3.1, 4.2, 5.3, 6.4, ..., 12.0] with sample size 50
+        for (uint256 i = 0; i < 10; i++) {
+            parameters3[i] = ud((i + 1) * 3.1e18).unwrap();
+        }
+        vm.prank(clients[2]);
+        aggregator.submitModel(parameters3, 50);
+
+        // Calculate expected weighted averages manually for verification 
+        //The expected weighted average results for all 10 parameters are 
+        //[2.4, 4.8, 7.2, 9.6, 12.0, 14.4, 16.8, 19.2, 21.6, 24.0]
+
+        // Retrieve the aggregated global model (should be automatically aggregated)
+        UD60x18[] memory globalModel = aggregator.getGlobalModel();
+
+        // Assert the aggregated values for All the parameters to demonstrate correctness
+        assertApproxEqAbs(unwrap(globalModel[0]), 2.4e18, 1e14, "Parameter 0 aggregated incorrectly");
+        assertApproxEqAbs(unwrap(globalModel[1]), 4.8e18, 1e14, "Parameter 1 aggregated incorrectly");
+        assertApproxEqAbs(unwrap(globalModel[2]), 7.2e18, 1e14, "Parameter 2 aggregated incorrectly");
+        assertApproxEqAbs(unwrap(globalModel[3]), 9.6e18, 1e14, "Parameter 3 aggregated incorrectly");
+        assertApproxEqAbs(unwrap(globalModel[4]), 12.0e18, 1e14, "Parameter 4 aggregated incorrectly");
+        assertApproxEqAbs(unwrap(globalModel[5]), 14.4e18, 1e14, "Parameter 5 aggregated incorrectly");
+        assertApproxEqAbs(unwrap(globalModel[6]), 16.8e18, 1e14, "Parameter 6 aggregated incorrectly");
+        assertApproxEqAbs(unwrap(globalModel[7]), 19.2e18, 1e14, "Parameter 7 aggregated incorrectly");
+        assertApproxEqAbs(unwrap(globalModel[8]), 21.6e18, 1e14, "Parameter 8 aggregated incorrectly");
+        assertApproxEqAbs(unwrap(globalModel[9]), 24.0e18, 1e14, "Parameter 9 aggregated incorrectly");
     }
 }
