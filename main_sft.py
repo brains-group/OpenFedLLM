@@ -15,7 +15,7 @@ from opacus import PrivacyEngine
 from transformers import AdamW
 
 # ===== Define the arguments =====
-script_args, fed_args, peft_config = get_config()
+script_args, fed_args, peft_config, privacy_args = get_config()
 training_args = get_training_args(script_args, script_args.learning_rate)
 save_config(script_args, fed_args)
 print(script_args, fed_args)
@@ -89,20 +89,6 @@ for round in tqdm(range(fed_args.num_rounds)):
         new_lr = cosine_learning_rate(round, fed_args.num_rounds, script_args.learning_rate, 1e-6)      # manually schedule the learning rate
         training_args = get_training_args(script_args, new_lr)
 
-        # ===== Before training, add differential privacy if needed =====
-        optimizer = AdamW(model.parameters(), lr=new_lr)
-        
-        if script_args.dp:
-            privacy_engine = PrivacyEngine(
-                model,
-                target_epsilon = script_args.epsilon,
-                target_delta = script_args.delta,
-                max_grad_norm = script_args.max_gradient_norm
-            )
-            # privacy_engine = PrivacyEngine()
-            
-            privacy_engine.attach(optimizer)
-
         # ===== Train local model on the client side =====
         trainer = get_fed_local_sft_trainer(
             model=model,
@@ -116,7 +102,7 @@ for round in tqdm(range(fed_args.num_rounds)):
             script_args=script_args,
             local_auxiliary=auxiliary_model_list[client],
             global_auxiliary=global_auxiliary,
-            optimizer=optimizer
+            privacy_args=privacy_args
         )
 
         results = trainer.train()
