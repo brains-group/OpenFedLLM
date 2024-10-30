@@ -8,10 +8,10 @@ import { UD60x18, ud, unwrap } from "@prb/math/src/UD60x18.sol";
 contract FederatedLearningAggregatorTest is Test {
     FederatedLearningAggregator aggregator;
     address[] clients;
-
+    address reputationTokenAddress = 0x1234567890AbcdEF1234567890aBcdef12345678;
     function setUp() public {
         // Deploy the contract with a total of 3 clients
-        aggregator = new FederatedLearningAggregator(3);
+        aggregator = new FederatedLearningAggregator(3,reputationTokenAddress);
 
         // Create a list of mock client addresses
         clients.push(address(0x1000)); // Mock client 1

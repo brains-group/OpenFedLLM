@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 import { SD59x18, sd } from "@prb/math/src/SD59x18.sol";
 import { UD60x18, ud, unwrap } from "@prb/math/src/UD60x18.sol";
+import "./ReputationToken.sol";
 
 contract FederatedLearningAggregator {
     address public owner;
@@ -12,6 +13,7 @@ contract FederatedLearningAggregator {
     uint256 public totalClients;
     uint256 public trainingRounds;
     uint256 public currentRound;
+    ReputationToken public reputationToken;
     mapping(address => bool) public hasSubmitted;
     mapping(address => UD60x18[]) public clientUpdates; // Store parameters as UD60x18[]
     mapping(address => uint256) public clientSampleSizes;
@@ -19,6 +21,7 @@ contract FederatedLearningAggregator {
     address[] public clients;
 
     event ModelSubmitted(address indexed client, UD60x18[] parameters, uint256 sampleSize);
+    event RewardedClient(address indexed client, uint256 amount);
     event ModelAggregated(UD60x18[] globalModel);
     event ResetForNextRound();
     event ResetFederatedLearning();
@@ -26,9 +29,10 @@ contract FederatedLearningAggregator {
     event GlobalModelSet(UD60x18[] newGlobalModel);
     event ModelURIUpdated(string newModelURI, string newVersion);
 
-    constructor(uint256 _totalClients) {
+    constructor(uint256 _totalClients, address _reputationTokenAddress) {
         owner = msg.sender;
         totalClients = _totalClients;
+        reputationToken = ReputationToken(_reputationTokenAddress);
     }
 
     modifier onlyOwner() {
@@ -39,6 +43,18 @@ contract FederatedLearningAggregator {
     modifier validClient() {
         require(!hasSubmitted[msg.sender], "Client has already submitted");
         _;
+    }
+
+    // Function to reward clients with reputation tokens
+    function rewardClient(address client, uint256 amount) internal {
+        reputationToken.mint(client, amount);
+        emit RewardedClient(client, amount);
+    }
+
+    // Example reward calculation function (you can modify this logic)
+    function calculateReward(uint256 sampleSize) internal pure returns (uint256) {
+        // In this example, the reward is proportional to the sample size
+        return sampleSize * 1e18; // Assuming 1 token per unit of sample size (in 18 decimal format)
     }
 
     // Submit model parameters, scaling the input if not done by the client
@@ -62,6 +78,9 @@ contract FederatedLearningAggregator {
         clientSampleSizes[msg.sender] = sampleSize;
         hasSubmitted[msg.sender] = true;
         numClients++;
+        
+        uint256 rewardAmount = calculateReward(sampleSize);
+        rewardClient(msg.sender, rewardAmount);
 
         emit ModelSubmitted(msg.sender, scaledParameters, sampleSize);
 
