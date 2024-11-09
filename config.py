@@ -1,10 +1,6 @@
 from dataclasses import dataclass, field, asdict
 from typing import Optional
-from transformers import (
-    HfArgumentParser,
-    TrainingArguments,
-    BitsAndBytesConfig,
-)
+from transformers import HfArgumentParser, TrainingArguments, BitsAndBytesConfig
 from trl import KTOConfig
 from peft import LoraConfig
 import os
@@ -22,6 +18,9 @@ class FedArguments:
     )
     num_rounds: Optional[int] = field(
         default=500, metadata={"help": "the number of rounds"}
+    )
+    checkpoint_step: Optional[int] = field(
+        default=50, metadata={"help": "rounds to save checkpoints"}
     )
     num_clients: Optional[int] = field(
         default=2, metadata={"help": "the number of clients"}
@@ -46,22 +45,19 @@ class FedArguments:
         },
     )
     fedopt_beta1: Optional[float] = field(
-        default=0.9, metadata={"help": "the beta1 parameter of FedYogi and FedAdam"}
+        default=0.5, metadata={"help": "the beta1 parameter of FedYogi and FedAdam"}
     )
     fedopt_beta2: Optional[float] = field(
         default=0.99, metadata={"help": "the beta2 parameter of FedYogi and FedAdam"}
-    )
-    save_model_freq: Optional[int] = field(
-        default=50,
-        metadata={
-            "help": "the frequency to save the model. 50 means save every 50 rounds"
-        },
     )
 
 
 @dataclass
 class ScriptArguments:
-
+    finetune_method: Optional[str] = field(
+        default="dpo",
+        metadata={"help": "the finetuning method name (sft, dpo, or kto)"},
+    )
     model_name_or_path: Optional[str] = field(
         default="meta-llama/Llama-2-7b-hf", metadata={"help": "the model name"}
     )
@@ -150,6 +146,29 @@ class ScriptArguments:
             "help": "the local data directory if you want to use downloaded data"
         },
     )
+    multi_turn_task: Optional[bool] = field(
+        default=False, metadata={"help": "Whether to train multi-turn task"}
+    )
+    dynamic_local_step: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to user dynamic local step(for chatbotPA tasks)"},
+    )
+    # for differential privacy
+    dp_max_grad_norm: Optional[float] = field(
+        default=1.0, metadata={"help": "the max grad norm for differential privacy"}
+    )
+    dp_delta: Optional[float] = field(
+        default=1e-4, metadata={"help": "the delta for differential privacy"}
+    )
+    dp_epsilon: Optional[float] = field(
+        default=1.0, metadata={"help": "the delta for differential privacy"}
+    )
+    dp_sigma: Optional[float] = field(
+        default=None,
+        metadata={
+            "help": "the manually set sigma for differential privacy, this will replace the sigma calculated by epsilon and delta"
+        },
+    )
 
 
 parser = HfArgumentParser((ScriptArguments, FedArguments))
@@ -164,6 +183,16 @@ if script_args.use_peft:
         bias="none",
         task_type="CAUSAL_LM",
     )
+    if script_args.model_name_or_path.find("Qwen") >= 0:
+        peft_config.target_modules = [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+        ]
 else:
     peft_config = None
 
@@ -173,7 +202,7 @@ def get_config():
 
 
 # ===== Define the training arguments =====
-def get_training_args(script_args, new_lr):
+def get_training_args(script_args, new_lr, local_step):
     training_args = TrainingArguments(
         output_dir=script_args.output_dir,
         per_device_train_batch_size=script_args.batch_size,
@@ -181,7 +210,7 @@ def get_training_args(script_args, new_lr):
         learning_rate=new_lr,
         logging_steps=script_args.logging_steps,
         num_train_epochs=script_args.num_train_epochs,
-        max_steps=script_args.max_steps,
+        max_steps=local_step,
         report_to=script_args.log_with,
         save_steps=script_args.save_steps,
         save_total_limit=script_args.save_total_limit,
@@ -189,11 +218,33 @@ def get_training_args(script_args, new_lr):
         hub_model_id=script_args.hub_model_id,
         gradient_checkpointing=script_args.gradient_checkpointing,
         lr_scheduler_type="constant",
+        remove_unused_columns=False
     )
     return training_args
 
 
-def get_kto_training_args(script_args, new_lr, dataset=None):
+# def get_dpo_training_args(script_args, new_lr, local_step):
+#     training_args = DPOConfig(
+#         output_dir=script_args.output_dir,
+#         per_device_train_batch_size=script_args.batch_size,
+#         gradient_accumulation_steps=script_args.gradient_accumulation_steps,
+#         learning_rate=new_lr,
+#         logging_steps=script_args.logging_steps,
+#         num_train_epochs=script_args.num_train_epochs,
+#         max_steps=local_step,
+#         report_to=script_args.log_with,
+#         save_steps=script_args.save_steps,
+#         save_total_limit=script_args.save_total_limit,
+#         push_to_hub=script_args.push_to_hub,
+#         hub_model_id=script_args.hub_model_id,
+#         gradient_checkpointing=script_args.gradient_checkpointing,
+#         lr_scheduler_type="constant",
+#         beta=script_args.dpo_beta,
+#     )
+#     return training_args
+
+
+def get_kto_training_args(script_args, new_lr, local_step, dataset=None):
     desirable_weight = 1
     if dataset is not None:
         numDesirable = sum(dataset["label"])
@@ -205,7 +256,33 @@ def get_kto_training_args(script_args, new_lr, dataset=None):
         learning_rate=new_lr,
         logging_steps=script_args.logging_steps,
         num_train_epochs=script_args.num_train_epochs,
-        max_steps=script_args.max_steps,
+        max_steps=local_step,
+        report_to=script_args.log_with,
+        save_steps=script_args.save_steps,
+        save_total_limit=script_args.save_total_limit,
+        push_to_hub=script_args.push_to_hub,
+        hub_model_id=script_args.hub_model_id,
+        gradient_checkpointing=script_args.gradient_checkpointing,
+        lr_scheduler_type="constant",
+        beta=script_args.kto_beta,
+        desirable_weight=desirable_weight,
+    )
+    return training_args
+
+
+def get_kto_training_args(script_args, new_lr, local_step, dataset=None):
+    desirable_weight = 1
+    if dataset is not None:
+        numDesirable = sum(dataset["label"])
+        desirable_weight = (dataset.num_rows - numDesirable) / numDesirable
+    training_args = KTOConfig(
+        output_dir=script_args.output_dir,
+        per_device_train_batch_size=script_args.batch_size,
+        gradient_accumulation_steps=script_args.gradient_accumulation_steps,
+        learning_rate=new_lr,
+        logging_steps=script_args.logging_steps,
+        num_train_epochs=script_args.num_train_epochs,
+        max_steps=local_step,
         report_to=script_args.log_with,
         save_steps=script_args.save_steps,
         save_total_limit=script_args.save_total_limit,
@@ -224,17 +301,9 @@ def get_model_config(script_args):
         raise ValueError(
             "You can't load the model in 8 bits and 4 bits at the same time"
         )
-    elif script_args.load_in_8bit:
-        quantization_config = BitsAndBytesConfig(load_in_8bit=script_args.load_in_8bit)
-        # Copy the model to each device
-        device_map = {"": Accelerator().local_process_index}
-        torch_dtype = torch.bfloat16
-    elif script_args.load_in_4bit:
+    elif script_args.load_in_8bit or script_args.load_in_4bit:
         quantization_config = BitsAndBytesConfig(
-            load_in_4bit=script_args.load_in_4bit,
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.bfloat16,
+            load_in_8bit=script_args.load_in_8bit, load_in_4bit=script_args.load_in_4bit
         )
         # Copy the model to each device
         device_map = {"": Accelerator().local_process_index}
@@ -252,7 +321,7 @@ def save_config(script_args, fed_args):
     output_dir = f"{script_args.output_dir}/{dataset_name_split}_{script_args.dataset_sample}_{fed_args.fed_alg}_c{fed_args.num_clients}s{fed_args.sample_clients}_i{script_args.max_steps}_b{script_args.batch_size}a{script_args.gradient_accumulation_steps}_l{script_args.seq_length}_r{script_args.peft_lora_r}a{script_args.peft_lora_alpha}_{now_time}"
     while True:
         if not os.path.exists(output_dir):
-            os.mkdir(output_dir)
+            os.makedirs(output_dir)
             break
         else:
             now_time = (datetime.now() + timedelta(seconds=1)).strftime("%Y%m%d%H%M%S")

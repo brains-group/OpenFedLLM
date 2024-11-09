@@ -37,6 +37,8 @@ def get_fed_local_dpo_trainer(script_args, fed_args, model, model_ref, tokenizer
                             beta=script_args.dpo_beta,
                             train_dataset=local_dataset,
                             tokenizer=tokenizer,
+                            max_length=512,
+                            max_prompt_length=128,
                             )
     return trainer
 

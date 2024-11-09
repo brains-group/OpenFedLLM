@@ -9,7 +9,7 @@ import torch
 
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from vllm import LLM, SamplingParams
+# from vllm import LLM, SamplingParams
 
 from utils.template import TEMPLATE_DICT
 
@@ -62,6 +62,7 @@ else:
         model_name = f"{exp_name}_{checkpoint_id}"
     else:
         model_name = last_str                       # mainly for base model
+        exp_name = model_name
 
 # ============= Load previous results if exists =============
 result_path = f"./data/{args.bench_name}/model_answer/{model_name}.json"
@@ -101,7 +102,7 @@ else:
     model = AutoModelForCausalLM.from_pretrained(args.base_model_path, torch_dtype=torch.float16).to(device)
     if args.lora_path is not None:
         model = PeftModel.from_pretrained(model, args.lora_path, torch_dtype=torch.float16).to(device)
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name, use_fast=False)
+    tokenizer = AutoTokenizer.from_pretrained(args.base_model_path, use_fast=False)
 
     for i, example in tqdm(enumerate(eval_set)):
         if i < existing_len:
@@ -115,7 +116,7 @@ else:
         output_ids = output_ids[0][len(input_ids[0]):]
         result = tokenizer.decode(output_ids, skip_special_tokens=True)
         example['output'] = result
-        example['generator'] = model_name
+        example['generator'] = exp_name
 
         print(f"\nInput: \n{instruction}")
         print(f"\nOutput: \n{result}")

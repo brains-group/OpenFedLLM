@@ -14,6 +14,11 @@ def cosine_learning_rate(current_round, total_rounds, initial_lr=0.001, min_lr=0
     cosine_lr = min_lr + 0.5 * (initial_lr - min_lr) * (1 + math.cos(math.pi * current_round / total_rounds))
     return cosine_lr
 
+def get_dynamic_local_step(local_dataset_length,script_args,fed_args,epoches=3):
+    sample_num = fed_args.num_rounds*fed_args.sample_clients/fed_args.num_clients
+    sample_data_num = local_dataset_length*epoches/sample_num
+    local_step = math.ceil(sample_data_num/(script_args.batch_size*script_args.gradient_accumulation_steps))
+    return local_step
 
 if __name__ == "__main__":
 

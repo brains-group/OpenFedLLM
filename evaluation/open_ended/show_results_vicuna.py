@@ -41,5 +41,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     for eval_name in args.eval_list:
-        file_path = f"./data/vicuna/model_judgment/{eval_name}.json"
+        file_path = f"./data/vicuna/model_judgment/gpt-4_{eval_name}.json"
         get_socres(file_path)
