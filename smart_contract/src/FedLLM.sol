@@ -22,7 +22,7 @@ contract FederatedLearningAggregator {
     address[] public clients;
 
     mapping(address => uint256) public alignmentScores;
-    mapping(address => uint256) public participationCount;
+    mapping(address => int256) public consistencyCount;
     mapping(address => uint256) public rewardMultipliers;
     mapping(address => uint256) public stakedAmounts;
 
@@ -40,7 +40,8 @@ contract FederatedLearningAggregator {
     event TrainingRoundsSet(uint256 rounds);
     event GlobalModelSet(UD60x18[] newGlobalModel);
     event ModelURIUpdated(string newModelURI, string newVersion);
-
+    event ConsistencyUpdated(address indexed client, int256 consistencyCount);
+    
     modifier onlyOwner() {
         require(msg.sender == owner, "Not authorized");
         _;
@@ -76,7 +77,6 @@ contract FederatedLearningAggregator {
         hasSubmitted[msg.sender] = true;
         numClients++;
 
-        participationCount[msg.sender]++;
         emit ModelSubmitted(msg.sender, scaledParameters, sampleSize);
 
         if (numClients == totalClients) {
@@ -84,11 +84,20 @@ contract FederatedLearningAggregator {
         }
     }
 
-    function calculateAlignmentScore(address client) internal view returns (uint256) {
+    function calculateAlignmentScore(address client) internal returns (uint256) {
         uint256 score = 0;
         for (uint256 i = 0; i < clientUpdates[client].length; i++) {
             score += unwrap(clientUpdates[client][i]) * unwrap(globalModel[i]);
         }
+
+        // Update consistency count based on alignment score
+        if (score > 0) {
+            consistencyCount[client] += 1; // Increase consistency
+        } else {
+            consistencyCount[client] -= 1; // Decrease consistency
+        }
+
+        emit ConsistencyUpdated(client, consistencyCount[client]);
         return score;
     }
 
@@ -125,6 +134,17 @@ contract FederatedLearningAggregator {
         }
     }
 
+    function updateMultipliers(address client) external onlyOwner {
+        int256 consistency = consistencyCount[client];
+        if (consistency >= 5) {
+            rewardMultipliers[client] = consistencyMultiplier;
+        } else if (consistency < 0) {
+            rewardMultipliers[client] = 90; // Reduce multiplier for poor consistency
+        } else {
+            rewardMultipliers[client] = 100; // Default multiplier
+        }
+    }
+
     function distributeRewards() external onlyOwner {
         for (uint256 i = 0; i < clients.length; i++) {
             address client = clients[i];
@@ -139,14 +159,6 @@ contract FederatedLearningAggregator {
         currentRound++;
     }
 
-    function updateMultipliers(address client) external onlyOwner {
-        if (participationCount[client] % 5 == 0) {
-            rewardMultipliers[client] = consistencyMultiplier;
-        } else {
-            rewardMultipliers[client] = 100;
-        }
-    }
-
     function resetForNextRound() internal {
         for (uint256 i = 0; i < clients.length; i++) {
             address client = clients[i];
@@ -158,6 +170,7 @@ contract FederatedLearningAggregator {
         delete clients;
         emit ResetForNextRound();
     }
+
     function getGlobalModel() public view returns (UD60x18[] memory) {
         return globalModel;
     }
