@@ -86,20 +86,22 @@ contract FederatedLearningAggregator {
 
     function calculateAlignmentScore(address client) internal returns (uint256) {
         uint256 score = 0;
+        int256 scale = 1000; // Scaling factor for consistency adjustment
+
+        // Calculate alignment score using dot product
         for (uint256 i = 0; i < clientUpdates[client].length; i++) {
             score += unwrap(clientUpdates[client][i]) * unwrap(globalModel[i]);
         }
 
-        // Update consistency count based on alignment score
-        if (score > 0) {
-            consistencyCount[client] += 1; // Increase consistency
-        } else {
-            consistencyCount[client] -= 1; // Decrease consistency
+        // Adjust consistency count based on the scaled score
+        if (int256(score) != 0) {
+            consistencyCount[client] += int256(score) / scale;
         }
 
         emit ConsistencyUpdated(client, consistencyCount[client]);
         return score;
     }
+
 
     function aggregateModels() internal {
         uint256 paramCount = clientUpdates[clients[0]].length;
