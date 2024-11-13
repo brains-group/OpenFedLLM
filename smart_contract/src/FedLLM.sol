@@ -14,6 +14,9 @@ contract FederatedLearningAggregator {
     uint256 public totalClients;
     uint256 public trainingRounds;
     uint256 public currentRound;
+    uint256 public consistencyCheckInterval = 5;
+    uint256 public lastConsistencyCheckRound = 0;
+
     ReputationToken public reputationToken;
     mapping(address => bool) public hasSubmitted;
     mapping(address => UD60x18[]) public clientUpdates;
@@ -148,6 +151,12 @@ contract FederatedLearningAggregator {
         // Automatically distribute rewards
         distributeRewards();
 
+        // Check consistency and update multipliers every few rounds
+        if (currentRound >= lastConsistencyCheckRound + consistencyCheckInterval) {
+            updateAllMultipliers();
+            lastConsistencyCheckRound = currentRound;
+        }
+
         // Increment the round counter
         currentRound++;
         if (currentRound < trainingRounds) {
@@ -156,23 +165,56 @@ contract FederatedLearningAggregator {
             emit ResetFederatedLearning();
         }
     }
+    
 
-
-
-    function updateMultipliers(address client) external onlyOwner {
+    function updateAllMultipliers() internal {
+    for (uint256 i = 0; i < clients.length; i++) {
+        address client = clients[i];
         SD59x18 consistency = consistencyCount[client];
-        SD59x18 threshold = sd(5 * 1e18); // Use fixed-point representation for threshold
+        SD59x18 highThreshold = sd(10 * 1e18); // High threshold for boosted multiplier
+        SD59x18 lowThreshold = sd(5 * 1e18);   // Standard consistency threshold
+        SD59x18 severePenaltyThreshold = sd(-5 * 1e18); // Severe penalty threshold
 
-        if (consistency.gte(threshold)) {
-            rewardMultipliers[client] = consistencyMultiplier; //110
-        } else if (consistency.lt(sd(-5 * 1e18))) {
-            rewardMultipliers[client] = 0; // Severe penalty for low consistency
+        // Assign multipliers based on the consistency count
+        if (consistency.gte(highThreshold)) {
+            rewardMultipliers[client] = consistencyMultiplier + 10; // Boosted multiplier for very high consistency
+        } else if (consistency.gte(lowThreshold)) {
+            rewardMultipliers[client] = consistencyMultiplier; // Standard consistency multiplier
+        } else if (consistency.lt(severePenaltyThreshold)) {
+            rewardMultipliers[client] = 0; // Severe penalty for very low consistency
         } else if (consistency.unwrap() < 0) {
             rewardMultipliers[client] = 90; // Reduced multiplier for poor consistency
         } else {
             rewardMultipliers[client] = 100; // Default multiplier
         }
+
+        emit ConsistencyUpdated(client, consistency.unwrap());
     }
+}
+
+
+    function updateMultipliers(address client) external onlyOwner {
+        SD59x18 consistency = consistencyCount[client];
+        SD59x18 highThreshold = sd(10 * 1e18); // High threshold for boosted multiplier
+        SD59x18 lowThreshold = sd(5 * 1e18);   // Standard consistency threshold
+        SD59x18 severePenaltyThreshold = sd(-5 * 1e18); // Severe penalty threshold
+
+        // Assign multipliers based on the consistency count
+        if (consistency.gte(highThreshold)) {
+            rewardMultipliers[client] = consistencyMultiplier + 10; // Boosted multiplier for very high consistency
+        } else if (consistency.gte(lowThreshold)) {
+            rewardMultipliers[client] = consistencyMultiplier; // Standard consistency multiplier
+        } else if (consistency.lt(severePenaltyThreshold)) {
+            rewardMultipliers[client] = 0; // Severe penalty for very low consistency
+        } else if (consistency.unwrap() < 0) {
+            rewardMultipliers[client] = 90; // Reduced multiplier for poor consistency
+        } else {
+            rewardMultipliers[client] = 100; // Default multiplier
+        }
+
+        emit ConsistencyUpdated(client, consistency.unwrap());
+    }
+
 
 
 
