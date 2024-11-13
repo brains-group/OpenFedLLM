@@ -22,7 +22,7 @@ contract FederatedLearningAggregator {
     address[] public clients;
 
     mapping(address => uint256) public alignmentScores;
-    mapping(address => int256) public consistencyCount;
+    mapping(address => SD59x18) public consistencyCount;
     mapping(address => uint256) public rewardMultipliers;
     mapping(address => uint256) public stakedAmounts;
 
@@ -86,21 +86,23 @@ contract FederatedLearningAggregator {
 
     function calculateAlignmentScore(address client) internal returns (uint256) {
         uint256 score = 0;
-        int256 scale = 1000; // Scaling factor for consistency adjustment
+        SD59x18 scale = sd(1000); // Scaling factor using PRBMath
 
         // Calculate alignment score using dot product
         for (uint256 i = 0; i < clientUpdates[client].length; i++) {
             score += unwrap(clientUpdates[client][i]) * unwrap(globalModel[i]);
         }
 
-        // Adjust consistency count based on the scaled score
-        if (int256(score) != 0) {
-            consistencyCount[client] += int256(score) / scale;
+        // Adjust consistency count using scaled score
+        SD59x18 scaledScore = sd(int256(score)).div(scale);
+        if (scaledScore.unwrap() != 0) {
+            consistencyCount[client] = consistencyCount[client].add(scaledScore);
         }
 
-        emit ConsistencyUpdated(client, consistencyCount[client]);
+        emit ConsistencyUpdated(client, consistencyCount[client].unwrap());
         return score;
     }
+
 
 
     function aggregateModels() internal {
@@ -137,15 +139,21 @@ contract FederatedLearningAggregator {
     }
 
     function updateMultipliers(address client) external onlyOwner {
-        int256 consistency = consistencyCount[client];
-        if (consistency >= 5) {
-            rewardMultipliers[client] = consistencyMultiplier;
-        } else if (consistency < 0) {
-            rewardMultipliers[client] = 90; // Reduce multiplier for poor consistency
+        SD59x18 consistency = consistencyCount[client];
+        SD59x18 threshold = sd(5 * 1e18); // Use fixed-point representation for threshold
+
+        if (consistency.gte(threshold)) {
+            rewardMultipliers[client] = consistencyMultiplier; //110
+        } else if (consistency.lt(sd(-5 * 1e18))) {
+            rewardMultipliers[client] = 0; // Severe penalty for low consistency
+        } else if (consistency.unwrap() < 0) {
+            rewardMultipliers[client] = 90; // Reduced multiplier for poor consistency
         } else {
             rewardMultipliers[client] = 100; // Default multiplier
         }
     }
+
+
 
     function distributeRewards() external onlyOwner {
         for (uint256 i = 0; i < clients.length; i++) {
@@ -158,7 +166,6 @@ contract FederatedLearningAggregator {
 
             alignmentScores[client] = 0;
         }
-        currentRound++;
     }
 
     function resetForNextRound() internal {
