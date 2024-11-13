@@ -86,14 +86,24 @@ contract FederatedLearningAggregator {
 
     function calculateAlignmentScore(address client) internal returns (uint256) {
         uint256 score = 0;
-        SD59x18 scale = sd(1000); // Scaling factor using PRBMath
+        uint256 sampleSize = clientSampleSizes[client];
+        uint256 totalSamples = 0;
 
-        // Calculate alignment score using dot product
+        // Calculate the total sample size
+        for (uint256 i = 0; i < clients.length; i++) {
+            totalSamples += clientSampleSizes[clients[i]];
+        }
+
+        // Calculate weighted dot product alignment score
         for (uint256 i = 0; i < clientUpdates[client].length; i++) {
             score += unwrap(clientUpdates[client][i]) * unwrap(globalModel[i]);
         }
 
-        // Adjust consistency count using scaled score
+        // Apply weighting based on sample size
+        score = (score * sampleSize) / totalSamples;
+
+        // Update consistency count using PRBMath for scaling
+        SD59x18 scale = sd(1000);
         SD59x18 scaledScore = sd(int256(score)).div(scale);
         if (scaledScore.unwrap() != 0) {
             consistencyCount[client] = consistencyCount[client].add(scaledScore);
@@ -105,15 +115,18 @@ contract FederatedLearningAggregator {
 
 
 
+
     function aggregateModels() internal {
         uint256 paramCount = clientUpdates[clients[0]].length;
         UD60x18[] memory aggregatedParams = new UD60x18[](paramCount);
         uint256 totalSamples = 0;
 
+        // Calculate the total sample size
         for (uint256 i = 0; i < clients.length; i++) {
             totalSamples += clientSampleSizes[clients[i]];
         }
 
+        // Aggregate parameters from all clients
         for (uint256 i = 0; i < clients.length; i++) {
             address client = clients[i];
             UD60x18[] memory clientParams = clientUpdates[client];
@@ -124,12 +137,18 @@ contract FederatedLearningAggregator {
                 aggregatedParams[j] = aggregatedParams[j].add(clientParams[j].mul(weight));
             }
 
+            // Calculate alignment score for the client
             alignmentScores[client] = calculateAlignmentScore(client);
         }
 
+        // Update the global model
         globalModel = aggregatedParams;
         emit ModelAggregated(globalModel);
 
+        // Automatically distribute rewards
+        distributeRewards();
+
+        // Increment the round counter
         currentRound++;
         if (currentRound < trainingRounds) {
             resetForNextRound();
@@ -137,6 +156,8 @@ contract FederatedLearningAggregator {
             emit ResetFederatedLearning();
         }
     }
+
+
 
     function updateMultipliers(address client) external onlyOwner {
         SD59x18 consistency = consistencyCount[client];
@@ -155,7 +176,7 @@ contract FederatedLearningAggregator {
 
 
 
-    function distributeRewards() external onlyOwner {
+    function distributeRewards() internal {
         for (uint256 i = 0; i < clients.length; i++) {
             address client = clients[i];
             uint256 score = alignmentScores[client];
@@ -164,9 +185,11 @@ contract FederatedLearningAggregator {
             reputationToken.mint(client, reward);
             emit RewardDistributed(client, reward);
 
+            // Reset alignment score for the next round
             alignmentScores[client] = 0;
         }
     }
+
 
     function resetForNextRound() internal {
         for (uint256 i = 0; i < clients.length; i++) {
