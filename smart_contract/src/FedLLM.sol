@@ -16,8 +16,11 @@ contract FederatedLearningAggregator {
     uint256 public currentRound;
     uint256 public consistencyCheckInterval = 5;
     uint256 public lastConsistencyCheckRound = 0;
-
+    uint256 public currentShapleyRound = 0;
     ReputationToken public reputationToken;
+    uint256 public bonusRewardPool;
+    mapping(uint256 => string) public shapleyIPFSCIDs; // Round -> IPFS CID
+    mapping(address => uint256) public shapleyValues;
     mapping(address => bool) public hasSubmitted;
     mapping(address => UD60x18[]) public clientUpdates;
     mapping(address => uint256) public clientSampleSizes;
@@ -44,7 +47,9 @@ contract FederatedLearningAggregator {
     event GlobalModelSet(UD60x18[] newGlobalModel);
     event ModelURIUpdated(string newModelURI, string newVersion);
     event ConsistencyUpdated(address indexed client, int256 consistencyCount);
-    
+    event ShapleyValuesUpdated(uint256 round, string cid);
+    event BonusDistributed(address indexed client, uint256 reward);
+
     modifier onlyOwner() {
         require(msg.sender == owner, "Not authorized");
         _;
@@ -116,8 +121,74 @@ contract FederatedLearningAggregator {
         return score;
     }
 
+    /**
+     * @dev Accept off-chain computed Shapley values and link to IPFS CID.
+     * @param ipfsCid The IPFS CID where Shapley values are stored.
+     * @param clientAddresses List of client addresses.
+     * @param values List of Shapley values corresponding to the clients.
+     */
+    function updateShapleyValues(string calldata ipfsCid, address[] calldata clientAddresses, uint256[] calldata values)
+    external
+    onlyOwner
+    {
+        require(bytes(ipfsCid).length > 0, "CID cannot be empty");
+        require(clientAddresses.length == values.length, "Input length mismatch");
+
+        // Increment round and store the IPFS CID for traceability
+        currentShapleyRound++;
+        shapleyIPFSCIDs[currentShapleyRound] = ipfsCid;
+
+        // Update Shapley values for the provided addresses
+        for (uint256 i = 0; i < clientAddresses.length; i++) {
+            shapleyValues[clientAddresses[i]] = values[i];
+        }
+
+        // Emit event for transparency
+        emit ShapleyValuesUpdated(currentShapleyRound, ipfsCid);
+    }
 
 
+    /**
+     * @dev Distribute rewards from the bonus pool based on Shapley values.
+     */
+    function distributeBonusRewards() external onlyOwner {
+        uint256 totalShapley = 0;
+
+        // Calculate total Shapley value
+        for (uint256 i = 0; i < clients.length; i++) {
+            totalShapley += shapleyValues[clients[i]];
+        }
+
+        require(totalShapley > 0, "No Shapley values to distribute");
+
+        // Distribute bonus rewards proportionally
+        for (uint256 i = 0; i < clients.length; i++) {
+            address client = clients[i];
+            uint256 clientShare = (bonusRewardPool * shapleyValues[client]) / totalShapley;
+            if (clientShare > 0) {
+                reputationToken.mint(client, clientShare);
+                emit BonusDistributed(client, clientShare);
+            }
+        }
+
+        // Reset bonus pool
+        bonusRewardPool = 0;
+    }
+
+    /**
+     * @dev Retrieve the CID for a specific Shapley computation round.
+     * @param round The round number.
+     */
+    function getShapleyCID(uint256 round) external view returns (string memory) {
+        return shapleyIPFSCIDs[round];
+    }
+
+    /**
+     * @dev Allocate a portion of rewards to the bonus pool.
+     */
+    function allocateToBonusPool(uint256 amount) internal {
+        bonusRewardPool += amount;
+    }
 
     function aggregateModels() internal {
         uint256 paramCount = clientUpdates[clients[0]].length;
@@ -149,7 +220,7 @@ contract FederatedLearningAggregator {
         emit ModelAggregated(globalModel);
 
         // Automatically distribute rewards
-        distributeRewards();
+        baseDistributeRewards();
 
         // Check consistency and update multipliers every few rounds
         if (currentRound >= lastConsistencyCheckRound + consistencyCheckInterval) {
@@ -218,7 +289,8 @@ contract FederatedLearningAggregator {
 
 
 
-    function distributeRewards() internal {
+    // Original logic
+    function baseDistributeRewards() internal {
         for (uint256 i = 0; i < clients.length; i++) {
             address client = clients[i];
             uint256 score = alignmentScores[client];
@@ -231,6 +303,28 @@ contract FederatedLearningAggregator {
             alignmentScores[client] = 0;
         }
     }
+
+    /**
+    * @dev New distributeRewards function with bonus pool allocation.
+    */
+    function distributeRewardsWithBonus() internal {
+        uint256 baseRewardAllocation = (baseReward * 90) / 100; // 90% for base rewards
+        uint256 bonusAllocation = (baseReward * 10) / 100; // 10% for bonus pool
+        allocateToBonusPool(bonusAllocation);
+
+        for (uint256 i = 0; i < clients.length; i++) {
+            address client = clients[i];
+            uint256 score = alignmentScores[client];
+            uint256 multiplier = rewardMultipliers[client] > 0 ? rewardMultipliers[client] : 100;
+            uint256 reward = (baseRewardAllocation * score * multiplier) / 10000;
+            reputationToken.mint(client, reward);
+            emit RewardDistributed(client, reward);
+
+            // Reset alignment score
+            alignmentScores[client] = 0;
+        }
+    }
+
 
 
     function resetForNextRound() internal {
