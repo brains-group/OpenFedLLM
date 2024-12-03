@@ -18,9 +18,13 @@ contract FederatedLearningAggregator {
     uint256 public lastConsistencyCheckRound = 0;
     uint256 public currentShapleyRound = 0;
     ReputationToken public reputationToken;
+
     uint256 public bonusRewardPool;
     mapping(uint256 => string) public shapleyIPFSCIDs; // Round -> IPFS CID
     mapping(address => uint256) public shapleyValues;
+    uint256 public fairnessCheckInterval = 5; // Check every 5 rounds
+    uint256 public lastFairnessCheckRound = 0;
+
     mapping(address => bool) public hasSubmitted;
     mapping(address => UD60x18[]) public clientUpdates;
     mapping(address => uint256) public clientSampleSizes;
@@ -31,6 +35,7 @@ contract FederatedLearningAggregator {
     mapping(address => SD59x18) public consistencyCount;
     mapping(address => uint256) public rewardMultipliers;
     mapping(address => uint256) public stakedAmounts;
+    mapping(uint256 => mapping(address => uint256)) public roundAlignmentScores;
 
     uint256 public baseReward = 100 * 1e18;
     uint256 public consistencyMultiplier = 110;
@@ -49,6 +54,8 @@ contract FederatedLearningAggregator {
     event ConsistencyUpdated(address indexed client, int256 consistencyCount);
     event ShapleyValuesUpdated(uint256 round, string cid);
     event BonusDistributed(address indexed client, uint256 reward);
+    event FairnessCheckTriggered(uint256 round);
+    event AlignmentScoresUpdated(uint256 indexed round, address indexed client, uint256 score);
 
     modifier onlyOwner() {
         require(msg.sender == owner, "Not authorized");
@@ -110,16 +117,13 @@ contract FederatedLearningAggregator {
         // Apply weighting based on sample size
         score = (score * sampleSize) / totalSamples;
 
-        // Update consistency count using PRBMath for scaling
-        SD59x18 scale = sd(1000);
-        SD59x18 scaledScore = sd(int256(score)).div(scale);
-        if (scaledScore.unwrap() != 0) {
-            consistencyCount[client] = consistencyCount[client].add(scaledScore);
-        }
+        // Emit event for transparency
+        emit AlignmentScoresUpdated(currentRound, client, score);
 
-        emit ConsistencyUpdated(client, consistencyCount[client].unwrap());
         return score;
     }
+
+
 
     /**
      * @dev Accept off-chain computed Shapley values and link to IPFS CID.
@@ -127,53 +131,30 @@ contract FederatedLearningAggregator {
      * @param clientAddresses List of client addresses.
      * @param values List of Shapley values corresponding to the clients.
      */
-    function updateShapleyValues(string calldata ipfsCid, address[] calldata clientAddresses, uint256[] calldata values)
-    external
-    onlyOwner
-    {
+    function updateFairnessData(string calldata ipfsCid, bytes32 computedHash, address[] calldata clientAddresses, uint256[] calldata values
+    ) external onlyOwner {
         require(bytes(ipfsCid).length > 0, "CID cannot be empty");
         require(clientAddresses.length == values.length, "Input length mismatch");
 
-        // Increment round and store the IPFS CID for traceability
+        // Verify the hash for data integrity
+        require(
+            keccak256(abi.encode(clientAddresses, values)) == computedHash,
+            "Hash mismatch"
+        );
+
+        // Store the IPFS CID for the current fairness round
         currentShapleyRound++;
         shapleyIPFSCIDs[currentShapleyRound] = ipfsCid;
 
-        // Update Shapley values for the provided addresses
+        // Accumulate the Shapley values
         for (uint256 i = 0; i < clientAddresses.length; i++) {
-            shapleyValues[clientAddresses[i]] = values[i];
+            shapleyValues[clientAddresses[i]] += values[i];
         }
 
-        // Emit event for transparency
         emit ShapleyValuesUpdated(currentShapleyRound, ipfsCid);
     }
 
 
-    /**
-     * @dev Distribute rewards from the bonus pool based on Shapley values.
-     */
-    function distributeBonusRewards() external onlyOwner {
-        uint256 totalShapley = 0;
-
-        // Calculate total Shapley value
-        for (uint256 i = 0; i < clients.length; i++) {
-            totalShapley += shapleyValues[clients[i]];
-        }
-
-        require(totalShapley > 0, "No Shapley values to distribute");
-
-        // Distribute bonus rewards proportionally
-        for (uint256 i = 0; i < clients.length; i++) {
-            address client = clients[i];
-            uint256 clientShare = (bonusRewardPool * shapleyValues[client]) / totalShapley;
-            if (clientShare > 0) {
-                reputationToken.mint(client, clientShare);
-                emit BonusDistributed(client, clientShare);
-            }
-        }
-
-        // Reset bonus pool
-        bonusRewardPool = 0;
-    }
 
     /**
      * @dev Retrieve the CID for a specific Shapley computation round.
@@ -189,6 +170,12 @@ contract FederatedLearningAggregator {
     function allocateToBonusPool(uint256 amount) internal {
         bonusRewardPool += amount;
     }
+
+    function fundBonusPool(uint256 amount) external onlyOwner {
+        require(amount > 0, "Amount must be greater than zero");
+        bonusRewardPool += amount;
+    }
+
 
     function aggregateModels() internal {
         uint256 paramCount = clientUpdates[clients[0]].length;
@@ -227,8 +214,12 @@ contract FederatedLearningAggregator {
             updateAllMultipliers();
             lastConsistencyCheckRound = currentRound;
         }
+        // Trigger fairness check if due
+        if (currentRound % fairnessCheckInterval == 0) {
+            lastFairnessCheckRound = currentRound;
+            emit FairnessCheckTriggered(currentRound);
+        }
 
-        // Increment the round counter
         currentRound++;
         if (currentRound < trainingRounds) {
             resetForNextRound();
@@ -239,29 +230,29 @@ contract FederatedLearningAggregator {
     
 
     function updateAllMultipliers() internal {
-    for (uint256 i = 0; i < clients.length; i++) {
-        address client = clients[i];
-        SD59x18 consistency = consistencyCount[client];
-        SD59x18 highThreshold = sd(10 * 1e18); // High threshold for boosted multiplier
-        SD59x18 lowThreshold = sd(5 * 1e18);   // Standard consistency threshold
-        SD59x18 severePenaltyThreshold = sd(-5 * 1e18); // Severe penalty threshold
+        for (uint256 i = 0; i < clients.length; i++) {
+            address client = clients[i];
+            SD59x18 consistency = consistencyCount[client];
+            SD59x18 highThreshold = sd(10 * 1e18); // High threshold for boosted multiplier
+            SD59x18 lowThreshold = sd(5 * 1e18);   // Standard consistency threshold
+            SD59x18 severePenaltyThreshold = sd(-5 * 1e18); // Severe penalty threshold
 
-        // Assign multipliers based on the consistency count
-        if (consistency.gte(highThreshold)) {
-            rewardMultipliers[client] = consistencyMultiplier + 10; // Boosted multiplier for very high consistency
-        } else if (consistency.gte(lowThreshold)) {
-            rewardMultipliers[client] = consistencyMultiplier; // Standard consistency multiplier
-        } else if (consistency.lt(severePenaltyThreshold)) {
-            rewardMultipliers[client] = 0; // Severe penalty for very low consistency
-        } else if (consistency.unwrap() < 0) {
-            rewardMultipliers[client] = 90; // Reduced multiplier for poor consistency
-        } else {
-            rewardMultipliers[client] = 100; // Default multiplier
+            // Assign multipliers based on the consistency count
+            if (consistency.gte(highThreshold)) {
+                rewardMultipliers[client] = consistencyMultiplier + 10; // Boosted multiplier for very high consistency
+            } else if (consistency.gte(lowThreshold)) {
+                rewardMultipliers[client] = consistencyMultiplier; // Standard consistency multiplier
+            } else if (consistency.lt(severePenaltyThreshold)) {
+                rewardMultipliers[client] = 0; // Severe penalty for very low consistency
+            } else if (consistency.unwrap() < 0) {
+                rewardMultipliers[client] = 90; // Reduced multiplier for poor consistency
+            } else {
+                rewardMultipliers[client] = 100; // Default multiplier
+            }
+
+            emit ConsistencyUpdated(client, consistency.unwrap());
         }
-
-        emit ConsistencyUpdated(client, consistency.unwrap());
     }
-}
 
 
     function updateMultipliers(address client) external onlyOwner {
@@ -304,28 +295,29 @@ contract FederatedLearningAggregator {
         }
     }
 
-    /**
-    * @dev New distributeRewards function with bonus pool allocation.
-    */
-    function distributeRewardsWithBonus() internal {
-        uint256 baseRewardAllocation = (baseReward * 90) / 100; // 90% for base rewards
-        uint256 bonusAllocation = (baseReward * 10) / 100; // 10% for bonus pool
-        allocateToBonusPool(bonusAllocation);
 
+    function distributeBonusRewardsAfterFairness() external onlyOwner {
+        require(currentShapleyRound > lastFairnessCheckRound, "No new fairness data");
+        uint256 totalShapley = 0;
+
+        // Calculate total Shapley value
+        for (uint256 i = 0; i < clients.length; i++) {
+            totalShapley += shapleyValues[clients[i]];
+        }
+        require(totalShapley > 0, "No Shapley values to distribute");
+
+        // Distribute rewards proportionally
         for (uint256 i = 0; i < clients.length; i++) {
             address client = clients[i];
-            uint256 score = alignmentScores[client];
-            uint256 multiplier = rewardMultipliers[client] > 0 ? rewardMultipliers[client] : 100;
-            uint256 reward = (baseRewardAllocation * score * multiplier) / 10000;
-            reputationToken.mint(client, reward);
-            emit RewardDistributed(client, reward);
-
-            // Reset alignment score
-            alignmentScores[client] = 0;
+            uint256 clientShare = (bonusRewardPool * shapleyValues[client]) / totalShapley;
+            if (clientShare > 0) {
+                reputationToken.mint(client, clientShare);
+                emit BonusDistributed(client, clientShare);
+            }
         }
+
+        bonusRewardPool = 0; // Reset bonus pool
     }
-
-
 
     function resetForNextRound() internal {
         for (uint256 i = 0; i < clients.length; i++) {
@@ -382,4 +374,6 @@ contract FederatedLearningAggregator {
     function getModelURI() public view returns (string memory, string memory) {
         return (modelURI, modelVersion);
     }
+
+
 }
