@@ -35,16 +35,31 @@ def compute_cumulative_shapley_values(contributions):
         raise ValueError("Total contributions cannot be zero.")
     return {client: round((value / total) * 1e18) for client, value in cumulative.items()}
 
-# Save to IPFS
-def save_to_ipfs(data):
+def save_to_ipfs(data, ipfs_address="/ip4/127.0.0.1/tcp/5001/http"):
+    """
+    Save data to IPFS and return the content identifier (CID).
+
+    Args:
+        data (dict or str): Data to upload to IPFS. Can be JSON-serializable or a raw string.
+        ipfs_address (str): Address of the IPFS daemon (default: local node).
+
+    Returns:
+        str: CID of the uploaded data.
+
+    Raises:
+        Exception: If the connection to IPFS or upload fails.
+    """
     try:
-        with ipfshttpclient.connect() as client:
+        # Connect to the IPFS client
+        with ipfshttpclient.connect(ipfs_address) as client:
+            # Upload data as JSON
             cid = client.add_json(data)
             print(f"Data uploaded to IPFS with CID: {cid}")
             return cid
+    except ipfshttpclient.exceptions.ConnectionError as ce:
+        raise Exception(f"Failed to connect to IPFS node at {ipfs_address}: {ce}")
     except Exception as e:
-        print(f"Error uploading to IPFS: {e}")
-        exit(1)
+        raise Exception(f"Error uploading to IPFS: {e}")
 
 # Compute integrity hash
 def compute_integrity_hash(clients, values):

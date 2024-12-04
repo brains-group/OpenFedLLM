@@ -1,24 +1,56 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
+pragma solidity ^0.8.0;
 
 import "forge-std/Test.sol";
 import "../src/FedLLM.sol";
 import { UD60x18, ud, unwrap } from "@prb/math/src/UD60x18.sol";
+import "forge-std/console.sol";
 
 contract FederatedLearningAggregatorTest is Test {
+    
     FederatedLearningAggregator aggregator;
     address[] clients;
-    address reputationTokenAddress = 0x1234567890AbcdEF1234567890aBcdef12345678;
     function setUp() public {
-        // Deploy the contract with a total of 3 clients
-        aggregator = new FederatedLearningAggregator(3,reputationTokenAddress);
+            // Deploy the aggregator contract with 3 clients
+        ReputationToken token = new ReputationToken();
+        address reputationTokenAddress = address(token);
 
-        // Create a list of mock client addresses
-        clients.push(address(0x1000)); // Mock client 1
-        clients.push(address(0x2000)); // Mock client 2
-        clients.push(address(0x3000)); // Mock client 3
+        // Deploy the aggregator and pass the token
+        aggregator = new FederatedLearningAggregator(3, reputationTokenAddress);
+
+        // Transfer ownership of the token to the aggregator
+        token.transferOwnership(address(aggregator));
+
+        // Ensure the ownership transfer
+        assertEq(token.owner(), address(aggregator), "Token ownership mismatch");
+
+        // Mock client addresses
+        clients.push(address(0x1000)); // Client 1
+        clients.push(address(0x2000)); // Client 2
+        clients.push(address(0x3000)); // Client 3
+
+        // Stake for each client
+        vm.prank(clients[0]);
+        aggregator.depositStake(10 * 1e18);
+        console.log("Client 1 staked:", aggregator.stakedAmounts(clients[0]));
+
+        vm.prank(clients[1]);
+        aggregator.depositStake(10 * 1e18);
+        console.log("Client 2 staked:", aggregator.stakedAmounts(clients[1]));
+
+        vm.prank(clients[2]);
+        aggregator.depositStake(10 * 1e18);
+        console.log("Client 3 staked:", aggregator.stakedAmounts(clients[2]));
+
+        // Validate setup
+        assertEq(aggregator.totalClients(), 3, "Total clients mismatch");
+
     }
 
+    function testBasicLog() public {
+        console.log("This is a basic test log");
+        assertTrue(true);
+    }
     function testSubmitAndAggregate_small_module() public {
         // Fake data for three clients
         // Client 1 submits [1.2, 2.5] with sample size 10
