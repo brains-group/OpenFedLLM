@@ -30,7 +30,7 @@ from utils.dp_sampler import ShuffledAuthorSampler
 logger = logging.get_logger(__name__)
 
 
-def get_fed_local_sft_trainer(script_args, fed_args, model, tokenizer, training_args, local_dataset, formatting_prompts_func, data_collator, global_dict, local_auxiliary, global_auxiliary, optimizer, privacy_args):
+def get_fed_local_sft_trainer(script_args, fed_args, model, tokenizer, training_args, local_dataset, formatting_prompts_func, data_collator, global_dict, local_auxiliary, global_auxiliary, privacy_args, grad_sampled):
     
     if fed_args.fed_alg == 'fedprox':
         trainer = SFTTrainerFedProx(
@@ -69,14 +69,16 @@ def get_fed_local_sft_trainer(script_args, fed_args, model, tokenizer, training_
             data_collator=data_collator
         )
     elif fed_args.fed_alg == 'dp-alg':
-        data_collator = DataCollatorForPrivateCausalLanguageModeling(tokenizer)
         trainer = OpacusDPTrainer(
-            args=training_args,
             model=model,
+            tokenizer=tokenizer,
+            args=training_args,
+            max_seq_length=script_args.seq_length,
             data_collator=data_collator,
             train_dataset=local_dataset,
-            data_collator=data_collator,
+            formatting_func=formatting_prompts_func,
             privacy_args=privacy_args,
+            grad_sampled=grad_sampled,
         )
     else:
         raise ValueError(f'Unsupported `fed_alg`: {fed_args.fed_alg}')
@@ -161,6 +163,7 @@ class OpacusDPTrainer(SFTTrainer):
         train_dataset: Optional[torch.utils.data.dataset.Dataset] = None,
         privacy_args = None,
         author_mapping: Optional[Sequence[Sequence[int]]] = None,
+        grad_sampled: bool = False,
         **kwargs: Dict
     ) -> None:
 
@@ -184,8 +187,6 @@ class OpacusDPTrainer(SFTTrainer):
             logger.info(f"Wrapping the model with DPDDP in distributed training.")
             model = opacus.distributed.DifferentiallyPrivateDistributedDataParallel(model)
 
-        model = GradSampleModule(model)
-
         # Instantiate privacy accountants
         self.rdp_accountant = RDPAccountant()
         self.prv_accountant = PRVAccountant(
@@ -206,6 +207,10 @@ class OpacusDPTrainer(SFTTrainer):
         )
         super().__init__(model=model, args=args, train_dataset=train_dataset, callbacks=[self.dp_callback], **kwargs)
 
+        if not isinstance(model, GradSampleModule) and not grad_sampled:
+            model = GradSampleModule(model)
+        
+        
         self.get_rdp_epsilon = lambda: self.rdp_accountant.get_epsilon(self.privacy_args.target_delta)  # RDP epsilon
         self.get_prv_epsilon = lambda: self.prv_accountant.compute_epsilon(self.state.global_step)[2]
 

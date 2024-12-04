@@ -108,16 +108,10 @@ class PrivacyArguments:
         )
     
     def __post_init__(self):
-        if self.disable_dp:
-            logger.warning("Disabling differentially private training...")
-            self.noise_multiplier = 0.0
-            self.per_sample_max_grad_norm = float('inf')
-            self.target_epsilon = None
-        else:
-            if bool(self.target_epsilon) == bool(self.noise_multiplier):
-                raise ValueError("Exactly one of the arguments --target_epsilon and --noise_multiplier must be used.")
-            if self.per_sample_max_grad_norm is None:
-                raise ValueError("DP training requires --per_sample_max_grad_norm argument.")
+        if bool(self.target_epsilon) == bool(self.noise_multiplier):
+            raise ValueError("Exactly one of the arguments --target_epsilon and --noise_multiplier must be used.")
+        if self.per_sample_max_grad_norm is None:
+            raise ValueError("DP training requires --per_sample_max_grad_norm argument.")
     
 def find_noise_multiplier(sampling_probability: float, num_steps: int, target_epsilon: float, target_delta: float,
                           eps_error: float=0.1) -> float:

@@ -68,8 +68,14 @@ formatting_prompts_func, response_template = get_formatting_prompts_func(script_
 response_template_ids = tokenizer.encode(response_template, add_special_tokens=False)[2:]   # Now we have it like in the dataset texts: `[2277, 29937, 4007, 22137, 29901]` for Llama2
 data_collator = DataCollatorForCompletionOnlyLM(response_template_ids, tokenizer=tokenizer)
 
+# ===== For Differential Privacy with Opacus, we need to slightly modify the Data Collator =====
+privacy_collator = DataCollatorForPrivateCausalLanguageModeling(response_template_ids, tokenizer=tokenizer)
+
 # ===== Start federated training =====
 training_loss = [[] for i in range(fed_args.num_clients)]
+
+# Flag to track if GradSampleModule has been applied to the model
+is_grad_sample_module_applied = False
 
 for round in tqdm(range(fed_args.num_rounds)):
 
@@ -102,8 +108,11 @@ for round in tqdm(range(fed_args.num_rounds)):
             script_args=script_args,
             local_auxiliary=auxiliary_model_list[client],
             global_auxiliary=global_auxiliary,
-            privacy_args=privacy_args
+            privacy_args=privacy_args,
+            grad_sampled=is_grad_sample_module_applied
         )
+        
+        is_grad_sample_module_applied = True
 
         results = trainer.train()
         training_loss[client].append(results.training_loss)

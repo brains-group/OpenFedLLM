@@ -3,7 +3,7 @@ num_rounds=200
 batch_size=16
 gradient_accumulation_steps=1
 seq_length=512
-num_clients=20
+num_clients=5
 sample_clients=2
 lora_r=32
 lora_alpha=64   # twice of lora_r
@@ -16,7 +16,7 @@ model_name_or_path="meta-llama/Llama-2-7b-hf"
 output_dir=./output
 
 gpu=0
-fed_alg="dp-alg"
+fed_alg="fedavg"
 
 CUDA_VISIBLE_DEVICES=$gpu python main_sft.py \
  --learning_rate $lr \
@@ -39,6 +39,5 @@ CUDA_VISIBLE_DEVICES=$gpu python main_sft.py \
  --template "alpaca" \
  --use_dp True \
  --per_sample_max_grad_norm 1.2 \
- --noise_multiplier 0.2 \
- --target_epsilon 1e-3 \
+ --noise_multiplier 0.8 \
  --target_delta 1e-5 \
