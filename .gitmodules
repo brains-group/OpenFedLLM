@@ -1,0 +1,3 @@
+[submodule "evaluation/open_ended/JudgeLM"]
+	path = evaluation/open_ended/JudgeLM
+	url = https://github.com/baaivision/JudgeLM.git
