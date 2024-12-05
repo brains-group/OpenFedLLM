@@ -8,7 +8,7 @@ one_score_pattern = re.compile("\[\[(\d+\.?\d*)\]\]")
 one_score_pattern_backup = re.compile("\[(\d+\.?\d*)\]")
 
 
-def get_socres(file_path):
+def get_scores(file_path):
     with open(file_path, "r") as f:
         ori_judge = json.load(f)
 
@@ -41,5 +41,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     for eval_name in args.eval_list:
-        file_path = f"./data/vicuna/model_judgment/gpt-4_{eval_name}.json"
-        get_socres(file_path)
+        file_path = f"./data/vicuna/model_judgment/BAAI/JudgeLM-33B-v1.0_{eval_name}.json"
+        get_scores(file_path)

@@ -104,11 +104,11 @@ termcolor==2.3.0
 threadpoolctl==3.5.0
 tiktoken==0.5.2
 tokenizers
-torch==2.0.1
+torch==2.1.0
 tqdm==4.66.1
 transformers==4.37.0
 transformers-stream-generator==0.0.4
-triton==2.0.0
+triton==2.1.0
 trl==0.8.6
 types-pytz==2024.1.0.20240417
 typing_extensions==4.7.1

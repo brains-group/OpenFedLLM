@@ -5,6 +5,7 @@ from tqdm import tqdm
 import numpy as np
 from typing import Dict
 import torch
+import random
 
 from datasets import Dataset, load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -57,6 +58,28 @@ if script_args.finetune_method == "kto":
         )
     )
 
+if script_args.redistribute_dataset:
+    random.seed(script_args.seed)
+    maxLength = max([local_dataset.num_rows for local_dataset in dataset])
+    datasetBackup = copy.deepcopy(dataset)
+    copyIndex = [
+        index
+        for local_dataset_index, local_dataset in enumerate(dataset)
+        for index in [
+            (local_dataset_index, subIndex)
+            for subIndex in list(range(local_dataset.num_rows))
+        ]
+    ]
+
+    def swapDatasetItem(example):
+        newIndex = copyIndex.pop(random.randint(0, len(copyIndex) - 1))
+        for key in example.keys():
+            example[key] = datasetBackup[newIndex[0]][newIndex[1]][key]
+
+    for datasetIndex in tqdm(range(len(dataset))):
+        dataset[datasetIndex].map(swapDatasetItem)
+
+
 # ===== Split the dataset into clients =====
 local_datasets = dataset[: fed_args.num_clients]
 sample_num_list = [len(local_datasets[i]) for i in range(fed_args.num_clients)]
@@ -100,7 +123,7 @@ if script_args.load_in_8bit or script_args.load_in_4bit:
         model, use_gradient_checkpointing=training_args.gradient_checkpointing
     )
 
-model = get_peft_model(model, peft_config)
+model = get_peft_model(model, peft_config).to(device="cuda")
 model.print_trainable_parameters()
 
 # ===== Define the global and local models =====
@@ -181,8 +204,6 @@ for round in tqdm(range(fed_args.num_rounds)):
             global_auxiliary,
         )
 
-        print(tokenizer.encode(sub_dataset[3]["prompt"]))
-
         results = trainer.train()
         training_loss[client].append(results.training_loss)
 
@@ -212,7 +233,7 @@ for round in tqdm(range(fed_args.num_rounds)):
     set_peft_model_state_dict(model, global_dict)  # update global model
 
     # ===== Save the model =====
-    if (round + 1) % 50 == 0:
+    if (round + 1) % fed_args.checkpoint_step == 0:
         trainer.save_model(
             os.path.join(script_args.output_dir, f"checkpoint-{round+1}")
         )

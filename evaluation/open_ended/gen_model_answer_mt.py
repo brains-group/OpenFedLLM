@@ -1,4 +1,4 @@
-# This python file is adapted from https://github.com/lm-sys/FastChat/blob/main/fastchat/llm_judge/gen_model_answer.py 
+# This python file is adapted from https://github.com/lm-sys/FastChat/blob/main/fastchat/llm_judge/gen_model_answer.py
 # This file is especially for MT-Bench, which is a multi-turn open-ended dialogue dataset.
 
 import json
@@ -12,6 +12,7 @@ from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 import sys
+
 sys.path.append("../../")
 from utils.conversation import get_conv_template
 
@@ -43,21 +44,26 @@ if args.lora_path:
     model_name = f"{exp_name}_{checkpoint_id}"
 else:
     pre_str, last_str = os.path.split(args.base_model_path)
-    if last_str.startswith("full"):                 # if the model is merged as full model
+    if last_str.startswith("full"):  # if the model is merged as full model
         _, exp_name = os.path.split(pre_str)
         checkpoint_id = last_str.split("-")[-1]
         model_name = f"{exp_name}_{checkpoint_id}"
     else:
-        model_name = last_str                       # mainly for base model
+        model_name = last_str  # mainly for base model
 
 question_file = f"./data/mtbench/question.jsonl"
 answer_file = f"./data/mtbench/model_answer/{model_name}.jsonl"
 
 # ============= Load model and tokenizer =============
-model = AutoModelForCausalLM.from_pretrained(args.base_model_path, torch_dtype=torch.float16).to('cuda')    # float16 to run inference of 7B model on 3090 GPU
+model = AutoModelForCausalLM.from_pretrained(
+    args.base_model_path, torch_dtype=torch.float16
+).to(
+    "cuda"
+)  # float16 to run inference of 7B model on 3090 GPU
 if args.lora_path:
     model = PeftModel.from_pretrained(model, args.lora_path, torch_dtype=torch.float16)
 tokenizer = AutoTokenizer.from_pretrained(args.base_model_path)
+
 
 # ============= Load questions =============
 def load_questions(question_file):
@@ -68,6 +74,8 @@ def load_questions(question_file):
             if line:
                 questions.append(json.loads(line))
     return questions
+
+
 questions = load_questions(question_file)
 
 # ============= Generate answers =============
@@ -78,7 +86,7 @@ for question in tqdm(questions):
         temperature = temperature_config[question["category"]]
     else:
         temperature = 0.7
-    
+
     choices = []
 
     for i in range(args.num_choices):
@@ -153,8 +161,13 @@ for question in tqdm(questions):
     with open(os.path.expanduser(answer_file), "a") as fout:
         ans_json = {
             "question_id": question["question_id"],
+            "question_body": question["turns"][0],
+            "decoding_method": "top_p_sampling",
             "model_id": model_name,
+            "model": model_name,
             "choices": choices,
+            "text": choices[0]["turns"][0],
+            "scores": {},
             "tstamp": time.time(),
         }
         fout.write(json.dumps(ans_json) + "\n")

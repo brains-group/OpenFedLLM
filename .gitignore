@@ -1,1 +1,5 @@
 __pycache__
+models/
+model_answer/
+model_judgment/
+outputs/

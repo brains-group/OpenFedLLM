@@ -82,6 +82,7 @@ for output in tqdm(model_outputs):
 
     judge_list.append(record_sample)
 
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
     with open(save_path, "w") as f:
         json.dump(judge_list, f, indent=4)
 
