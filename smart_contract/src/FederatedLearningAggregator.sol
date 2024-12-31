@@ -14,7 +14,7 @@ contract FederatedLearningAggregator {
     uint256 public totalClients;
     uint256 public trainingRounds;
     uint256 public currentRound;
-    uint256 public consistencyCheckInterval = 5;
+    uint256 public immutable consistencyCheckInterval = 5;
     uint256 public lastConsistencyCheckRound = 0;
     uint256 public currentShapleyRound = 0;
     ReputationToken public reputationToken;
@@ -22,7 +22,7 @@ contract FederatedLearningAggregator {
     uint256 public bonusRewardPool;
     mapping(uint256 => string) public shapleyIPFSCIDs; // Round -> IPFS CID
     mapping(address => uint256) public shapleyValues;
-    uint256 public fairnessCheckInterval = 5; // Check every 5 rounds
+    uint256 public immutable fairnessCheckInterval = 5; // Check every 5 rounds
     uint256 public lastFairnessCheckRound = 0;
 
     mapping(address => bool) public hasSubmitted;
@@ -37,14 +37,14 @@ contract FederatedLearningAggregator {
     mapping(address => uint256) public stakedAmounts;
     mapping(uint256 => mapping(address => uint256)) public roundAlignmentScores;
 
-    uint256 public baseReward = 100 * 1e18;
-    uint256 public consistencyMultiplier = 110;
-    uint256 public stakingRequirement = 10 * 1e18;
+    uint256 public constant baseReward = 100 * 1e18;
+    uint256 public constant consistencyMultiplier = 110;
+    uint256 public constant stakingRequirement = 10 * 1e18;
 
     event RewardDistributed(address indexed client, uint256 reward);
     event StakeDeposited(address indexed client, uint256 amount);
     event StakeWithdrawn(address indexed client, uint256 amount);
-    event ModelSubmitted(address indexed client, UD60x18[] parameters, uint256 sampleSize);
+    event ModelSubmitted(address indexed client, bytes32 parametersHash, uint256 sampleSize);
     event ModelAggregated(UD60x18[] globalModel);
     event ResetForNextRound();
     event ResetFederatedLearning();
@@ -75,75 +75,75 @@ contract FederatedLearningAggregator {
     }
 
     function depositStake(uint256 amount) external {
-        //console.log("Client 1 staked:", amount);
         require(amount >= stakingRequirement, "Stake requirement not met");
         stakedAmounts[msg.sender] += amount;
-        // console.log("Client 1 staked:", stakedAmounts[msg.sender]);
         emit StakeDeposited(msg.sender, amount);
     }
 
+    function calculateTotalSamples() internal view returns (SD59x18) {
+    SD59x18 totalSamples = sd(0);
+    for (uint256 i = 0; i < clients.length; i++) {
+        totalSamples = totalSamples.add(sd(int256(clientSampleSizes[clients[i]])));
+    }
+    return totalSamples;
+}
+
     function submitModel(uint256[] memory parameters, uint256 sampleSize) public validClient {
-            require(parameters.length > 0, "Parameters cannot be empty");
-            require(sampleSize > 0, "Sample size must be greater than zero");
-            console.log("numClients:", numClients);
-            console.log("totalClients:", totalClients);
+        uint256 paramLength = parameters.length;
+        require(paramLength > 0, "Parameters cannot be empty");
+        require(sampleSize > 0, "Sample size must be greater than zero");
+        console.log("numClients:", numClients);
+        console.log("totalClients:", totalClients);
 
-            if (!hasSubmitted[msg.sender]) {
-                clients.push(msg.sender);
-            }
-
-            UD60x18[] memory scaledParameters = new UD60x18[](parameters.length);
-            for (uint256 i = 0; i < parameters.length; i++) {
-                scaledParameters[i] = UD60x18.wrap(parameters[i]);
-            }
-
-            clientUpdates[msg.sender] = scaledParameters;
-            clientSampleSizes[msg.sender] = sampleSize;
+        if (!hasSubmitted[msg.sender]) {
+            clients.push(msg.sender);
             hasSubmitted[msg.sender] = true;
-            numClients++;
-
-            emit ModelSubmitted(msg.sender, scaledParameters, sampleSize);
-
-            if (numClients == totalClients) {
-                aggregateModels();
-            }
         }
 
-    function calculateAlignmentScore(address client) internal returns (SD59x18) {
+        UD60x18[] memory scaledParameters = new UD60x18[](parameters.length);
+        for (uint256 i = 0; i < paramLength; i++) {
+            scaledParameters[i] = UD60x18.wrap(parameters[i]);
+        }
+
+        clientUpdates[msg.sender] = scaledParameters;
+        clientSampleSizes[msg.sender] = sampleSize;
+        numClients++;
+
+        emit ModelSubmitted(msg.sender, keccak256(abi.encode(scaledParameters)), sampleSize);
+
+        // if (numClients == totalClients) {
+        //     aggregateModels();
+        // }
+    }
+
+    function calculateAlignmentScore(address client) public returns (SD59x18) {
         SD59x18 score = sd(0);
         SD59x18 sampleSize = sd(int256(clientSampleSizes[client]));
-        SD59x18 totalSamples = sd(0);
 
-        // Calculate the total sample size
-        for (uint256 i = 0; i < clients.length; i++) {
-            totalSamples = totalSamples.add(sd(int256(clientSampleSizes[clients[i]])));
-        }
+        // Use reusable function to calculate total samples
+        SD59x18 totalSamples = calculateTotalSamples();
+        require(totalSamples.unwrap() > 0, "Total samples must be greater than zero");
 
-        // Calculate weighted dot product alignment score
-        for (uint256 i = 0; i < clientUpdates[client].length; i++) {
-            // Convert UD60x18 values to int256 safely
-            int256 clientValue = int256(unwrap(clientUpdates[client][i]));
+        // Cache client updates in memory
+        UD60x18[] memory updates = clientUpdates[client];
+        for (uint256 i = 0; i < updates.length; i++) {
+            int256 clientValue = int256(unwrap(updates[i]));
             int256 globalValue = int256(unwrap(globalModel[i]));
-
-            // Accumulate the dot product
             score = score.add(sd(clientValue).mul(sd(globalValue)));
         }
 
         // Apply weighting based on sample size
         score = score.mul(sampleSize).div(totalSamples);
 
-        // Adjust consistency count directly
+        // Update consistency count
         consistencyCount[client] = consistencyCount[client].add(score);
 
-        // Emit events for transparency
+        // Emit combined event for alignment and consistency
         emit AlignmentScoresUpdated(currentRound, client, score.unwrap());
         emit ConsistencyUpdated(client, consistencyCount[client].unwrap());
 
         return score;
     }
-
-
-
 
 
     /**
@@ -198,48 +198,35 @@ contract FederatedLearningAggregator {
     }
 
 
-    function aggregateModels() internal {
+    function aggregateModels() public {
         console.log("Entering aggregateModels");
         uint256 paramCount = clientUpdates[clients[0]].length;
         //console.log("Passed");
         UD60x18[] memory aggregatedParams = new UD60x18[](paramCount);
-        uint256 totalSamples = 0;
+        // Use reusable function to calculate total samples
+        SD59x18 totalSamples = calculateTotalSamples();
+        require(totalSamples.unwrap() > 0, "Total samples must be greater than zero");
 
-        // Calculate the total sample size
-        for (uint256 i = 0; i < clients.length; i++) {
-            totalSamples += clientSampleSizes[clients[i]];
-        }
-        //console.log("Passed");
-
-        // Aggregate parameters from all clients
+         // Aggregate parameters from all clients
         for (uint256 i = 0; i < clients.length; i++) {
             address client = clients[i];
             UD60x18[] memory clientParams = clientUpdates[client];
             uint256 clientSampleSize = clientSampleSizes[client];
 
             for (uint256 j = 0; j < clientParams.length; j++) {
-                UD60x18 weight = ud(clientSampleSize).div(ud(totalSamples));
+                // Cast totalSamples to uint256 to match ud() requirements
+                UD60x18 weight = ud(clientSampleSize).div(ud(uint256(totalSamples.unwrap())));
                 aggregatedParams[j] = aggregatedParams[j].add(clientParams[j].mul(weight));
             }
-            //console.log("Passed");
-            
-
         }
         
         // Update the global model
         globalModel = aggregatedParams;
         emit ModelAggregated(globalModel);
 
-        // Calculate alignment scores after global model aggregation
-        for (uint256 i = 0; i < clients.length; i++) {
-            address client = clients[i];
-            alignmentScores[client] = calculateAlignmentScore(client);
-            //console.log("Alignment score for client", client, ":", alignmentScores[client]);
-        }
-        console.log("Aggregator1 Passed");
         // Automatically distribute rewards
-        baseDistributeRewards();
-        console.log("Aggregator2 Passed");
+        //baseDistributeRewards();
+
         // Check consistency and update multipliers every few rounds
         if (currentRound >= lastConsistencyCheckRound + consistencyCheckInterval) {
             updateAllMultipliers();
@@ -258,7 +245,13 @@ contract FederatedLearningAggregator {
             emit ResetFederatedLearning();
         }
     }
-    
+
+    function calculateAlignmentScore_All() public{
+        for (uint256 i = 0; i < clients.length; i++) {
+            address client = clients[i];
+            alignmentScores[client] = calculateAlignmentScore(client);
+        }
+    }
 
     function updateAllMultipliers() internal {
         for (uint256 i = 0; i < clients.length; i++) {
@@ -286,33 +279,7 @@ contract FederatedLearningAggregator {
     }
 
 
-    function updateMultipliers(address client) external onlyOwner {
-        SD59x18 consistency = consistencyCount[client];
-        SD59x18 highThreshold = sd(10 * 1e18); // High threshold for boosted multiplier
-        SD59x18 lowThreshold = sd(5 * 1e18);   // Standard consistency threshold
-        SD59x18 severePenaltyThreshold = sd(-5 * 1e18); // Severe penalty threshold
-
-        // Assign multipliers based on the consistency count
-        if (consistency.gte(highThreshold)) {
-            rewardMultipliers[client] = consistencyMultiplier + 10; // Boosted multiplier for very high consistency
-        } else if (consistency.gte(lowThreshold)) {
-            rewardMultipliers[client] = consistencyMultiplier; // Standard consistency multiplier
-        } else if (consistency.lt(severePenaltyThreshold)) {
-            rewardMultipliers[client] = 0; // Severe penalty for very low consistency
-        } else if (consistency.unwrap() < 0) {
-            rewardMultipliers[client] = 90; // Reduced multiplier for poor consistency
-        } else {
-            rewardMultipliers[client] = 100; // Default multiplier
-        }
-
-        emit ConsistencyUpdated(client, consistency.unwrap());
-    }
-
-
-
-
-    // Original logic
-    function baseDistributeRewards() internal {
+    function baseDistributeRewards() public {
         for (uint256 i = 0; i < clients.length; i++) {
             address client = clients[i];
             SD59x18 score = alignmentScores[client];
@@ -400,22 +367,6 @@ contract FederatedLearningAggregator {
         }
         delete clients;
         emit ResetFederatedLearning();
-    }
-
-    function setGlobalModel(UD60x18[] memory newGlobalModel) public onlyOwner {
-        require(newGlobalModel.length > 0, "Global model cannot be empty");
-        globalModel = newGlobalModel;
-        emit GlobalModelSet(newGlobalModel);
-    }
-
-    function updateModelURI(string memory newModelURI, string memory newVersion) public onlyOwner {
-        modelURI = newModelURI;
-        modelVersion = newVersion;
-        emit ModelURIUpdated(newModelURI, newVersion);
-    }
-
-    function getModelURI() public view returns (string memory, string memory) {
-        return (modelURI, modelVersion);
     }
 
 
