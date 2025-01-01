@@ -78,18 +78,19 @@ The framework consists of the following core components:
 
 ```plaintext
 .
-├── contracts/
-│   ├── FederatedLearningAggregator.sol  # Smart contract for aggregation and rewards.
-│   ├── ReputationToken.sol              # Smart contract for reputation-based tokens.
-├── test/
-│   ├── AlignmentScoresTest.t.sol        # Unit tests for alignment scores.
-│   ├── FederatedLearningAggregatorTest.t.sol  # Unit tests for aggregation logic.
-├── scripts/
-│   ├── Deploy.s.sol                     # Deployment scripts for smart contracts.
-├── images/
-│   ├── system-architecture.png          # System architecture diagram.
-│   ├── full-workflow.png                # Full workflow diagram.
+├── Shapley/                             # Backend system for Shapley value computation.
+├── images/                              # Contains system architecture and workflow diagrams.
+├── node_modules/                        # Node.js dependencies (automatically generated).
+├── out/                                 # Compiled contract artifacts and build files.
+├── script/                              # Scripts for deploying and interacting with contracts.
+├── src/                                 # Source code for smart contracts.
+├── test/                                # Unit tests for smart contracts.
 ├── README.md                            # Project documentation.
+├── foundry.toml                         # Foundry configuration file.
+├── package.json                         # Node.js dependencies configuration file.
+├── package-lock.json                    # Node.js dependency lock file.
+├── remappings.txt                       # Solidity import remappings for Foundry.
+
 ```
 
 ---
