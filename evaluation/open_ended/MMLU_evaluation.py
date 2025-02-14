@@ -90,10 +90,10 @@ class Alpaca7B(DeepEvalBaseLLM):
         #     f"----------------------------------{response}------------------------------------------------------"
         # )
         # response = response[(response.find("### Response:") + len("### Response:")) :]
-        reponse = re.findall("[ABCDEF]", response)
+        answers = re.findall("[ABCDEF]", response)
         if re.search("[ABCDEF]", response):
             # print(f"<<<<<<<<<<<<<<<<<<<<{response}>>>>>>>>>>>>>>>>>>>>>")
-            response = reponse[0]
+            response = answers[0]
         return response
 
         # print(
