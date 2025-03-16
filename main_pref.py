@@ -6,6 +6,7 @@ import numpy as np
 from typing import Dict
 import torch
 import random
+from utils.template import TEMPLATE_DICT
 
 from datasets import Dataset, load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -42,42 +43,42 @@ if fed_args.fed_alg.startswith("local"):
 else:
     dataset = get_fed_datasets(script_args.local_data_dir)
 
-if script_args.finetune_method == "kto":
-    # ===== Process dataset into KTO format =====
-    dataset = list(
-        map(
-            lambda local_dataset: Dataset.from_dict(
-                {
-                    "prompt": local_dataset["prompt"] + local_dataset["prompt"],
-                    "completion": local_dataset["chosen"] + local_dataset["rejected"],
-                    "label": ([True] * local_dataset.num_rows)
-                    + ([False] * local_dataset.num_rows),
-                }
-            ),
-            dataset,
-        )
-    )
+# if script_args.finetune_method == "kto":
+#     # ===== Process dataset into KTO format =====
+#     dataset = list(
+#         map(
+#             lambda local_dataset: Dataset.from_dict(
+#                 {
+#                     "prompt": local_dataset["prompt"] + local_dataset["prompt"],
+#                     "completion": local_dataset["chosen"] + local_dataset["rejected"],
+#                     "label": ([True] * local_dataset.num_rows)
+#                     + ([False] * local_dataset.num_rows),
+#                 }
+#             ),
+#             dataset,
+#         )
+#     )
 
-if script_args.redistribute_dataset:
-    random.seed(script_args.seed)
-    maxLength = max([local_dataset.num_rows for local_dataset in dataset])
-    datasetBackup = copy.deepcopy(dataset)
-    copyIndex = [
-        index
-        for local_dataset_index, local_dataset in enumerate(dataset)
-        for index in [
-            (local_dataset_index, subIndex)
-            for subIndex in list(range(local_dataset.num_rows))
-        ]
-    ]
+# if script_args.redistribute_dataset:
+#     random.seed(script_args.seed)
+#     maxLength = max([local_dataset.num_rows for local_dataset in dataset])
+#     datasetBackup = copy.deepcopy(dataset)
+#     copyIndex = [
+#         index
+#         for local_dataset_index, local_dataset in enumerate(dataset)
+#         for index in [
+#             (local_dataset_index, subIndex)
+#             for subIndex in list(range(local_dataset.num_rows))
+#         ]
+#     ]
 
-    def swapDatasetItem(example):
-        newIndex = copyIndex.pop(random.randint(0, len(copyIndex) - 1))
-        for key in example.keys():
-            example[key] = datasetBackup[newIndex[0]][newIndex[1]][key]
+#     def swapDatasetItem(example):
+#         newIndex = copyIndex.pop(random.randint(0, len(copyIndex) - 1))
+#         for key in example.keys():
+#             example[key] = datasetBackup[newIndex[0]][newIndex[1]][key]
 
-    for datasetIndex in tqdm(range(len(dataset))):
-        dataset[datasetIndex].map(swapDatasetItem)
+#     for datasetIndex in tqdm(range(len(dataset))):
+#         dataset[datasetIndex].map(swapDatasetItem)
 
 
 # ===== Split the dataset into clients =====
@@ -140,6 +141,9 @@ tokenizer = AutoTokenizer.from_pretrained(
 )
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.unk_token  # following vicuna
+print(f"pad_token_id: {tokenizer.pad_token_id}")
+model.generation_config.pad_token_id=tokenizer.pad_token_id
+tokenizer.chat_template = TEMPLATE_DICT[script_args.template][0]
 
 # ===== Start federated training =====
 training_loss = [[] for i in range(fed_args.num_clients)]

@@ -8,7 +8,7 @@ num_clients=747
 sample_clients=10
 lr=1e-4
 
-local_data_dir=data/Fed-ChatbotPA/chatbotPA_747c_10k.json     # you may uncomment this line if your data is stored locally and include it in the python command
+local_data_dir=data/Fed-ChatbotPA/usersDataset.json     # you may uncomment this line if your data is stored locally and include it in the python command
 dataset_name=FedChatbotPA
 dataset_sample=9508
 model_name_or_path="chavinlo/alpaca-native"

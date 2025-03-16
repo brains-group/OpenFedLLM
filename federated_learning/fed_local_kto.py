@@ -11,7 +11,7 @@ def get_fed_local_kto_trainer(script_args, fed_args, model, model_ref, tokenizer
                             ref_model=model_ref,
                             args=training_args,
                             train_dataset=local_dataset,
-                            tokenizer=tokenizer,
+                            processing_class=tokenizer,
                             global_state=global_dict,
                             prox_mu=fed_args.prox_mu,
                             )
@@ -21,19 +21,20 @@ def get_fed_local_kto_trainer(script_args, fed_args, model, model_ref, tokenizer
                             ref_model=model_ref,
                             args=training_args,
                             train_dataset=local_dataset,
-                            tokenizer=tokenizer,
+                            processing_class=tokenizer,
                             global_state=global_dict,
                             local_auxiliary=local_auxiliary,
                             global_auxiliary=global_auxiliary,
                             )
         trainer.add_callback(SCAFFOLD_Callback(trainer.correction, model))
     else: # such as fedavg, local0
+        print(local_dataset["prompt"][0])
         trainer = KTOTrainer(
                             model=model,
                             ref_model=model_ref,
                             args=training_args,
                             train_dataset=local_dataset,
-                            tokenizer=tokenizer,
+                            processing_class=tokenizer,
                             )
     return trainer
 
