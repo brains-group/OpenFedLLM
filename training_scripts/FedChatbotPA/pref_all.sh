@@ -4,7 +4,7 @@ checkpoint_step=10
 batch_size=8
 gradient_accumulation_steps=1
 seq_length=1024
-num_clients=747
+num_clients=1159
 sample_clients=10
 lr=1e-4
 
