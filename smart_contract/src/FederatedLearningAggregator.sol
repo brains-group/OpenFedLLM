@@ -1,373 +1,365 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
-import "forge-std/console.sol";
-import { SD59x18, sd } from "@prb/math/src/SD59x18.sol";
-import { UD60x18, ud, unwrap } from "@prb/math/src/UD60x18.sol";
+
+import { SD59x18, sd, unwrap } from "@prb/math/src/SD59x18.sol";
+import { UD60x18, ud }         from "@prb/math/src/UD60x18.sol";
 import "./ReputationToken.sol";
 
-
 contract FederatedLearningAggregator {
-    address public owner;
+    // --- IMMUTABLES & STATE ---
+    address public immutable owner;
+    ReputationToken public immutable reputationToken;
+
     string public modelURI;
     string public modelVersion;
-    uint256 public numClients;
-    uint256 public totalClients;
-    uint256 public trainingRounds;
-    uint256 public currentRound;
-    uint256 public immutable consistencyCheckInterval = 5;
-    uint256 public lastConsistencyCheckRound = 0;
-    uint256 public currentShapleyRound = 0;
-    ReputationToken public reputationToken;
+
+    UD60x18[] public globalModel;
+
+    uint32 public totalClients;
+    uint32 public trainingRounds;
+    uint32 public currentRound;
+    uint32 public currentShapleyRound;
+    uint32 public lastFairnessCheckRound;
+    uint32 public numClients;
 
     uint256 public bonusRewardPool;
-    mapping(uint256 => string) public shapleyIPFSCIDs; // Round -> IPFS CID
-    mapping(address => uint256) public shapleyValues;
-    uint256 public immutable fairnessCheckInterval = 5; // Check every 5 rounds
-    uint256 public lastFairnessCheckRound = 0;
 
-    mapping(address => bool) public hasSubmitted;
-    mapping(address => UD60x18[]) public clientUpdates;
+    mapping(address => bool)    public hasSubmitted;
+    mapping(address => bytes32) public paramsHashes;       // keccak256(IPFS‑encoded parameters)
     mapping(address => uint256) public clientSampleSizes;
-    UD60x18[] public globalModel;
     address[] public clients;
 
     mapping(address => SD59x18) public alignmentScores;
+    mapping(uint32 => mapping(address => int256)) public roundAlignmentScores;
+
     mapping(address => SD59x18) public consistencyCount;
     mapping(address => uint256) public rewardMultipliers;
-    mapping(address => uint256) public stakedAmounts;
-    mapping(uint256 => mapping(address => uint256)) public roundAlignmentScores;
 
-    uint256 public constant baseReward = 100 * 1e18;
-    uint256 public constant consistencyMultiplier = 110;
+    mapping(uint32 => bytes32) public shapleyIPFSHashes;
+    mapping(address => uint256) public shapleyValues;
+
+    uint256 public constant baseReward         = 100 * 1e18;
     uint256 public constant stakingRequirement = 10 * 1e18;
+    uint256 public constant consistencyMultiplier = 110;
+
+    // --- EVENTS ---
+    event ModelSubmitted(
+        uint32  indexed round,
+        address indexed client,
+        bytes32          paramsHash,
+        uint256          sampleSize
+    );
+    event AlignmentScoresUpdated(
+        uint32  indexed round,
+        address indexed client,
+        int256           rawScore
+    );
+    event ModelAggregated(UD60x18[] newGlobalModel);
+    event FairnessCheckTriggered(uint32 round);
+    event ResetForNextRound();
+    event ResetRound(uint32 nextRound);
 
     event RewardDistributed(address indexed client, uint256 reward);
+    event BonusDistributed(address indexed client, uint256 reward);
+
     event StakeDeposited(address indexed client, uint256 amount);
     event StakeWithdrawn(address indexed client, uint256 amount);
-    event ModelSubmitted(address indexed client, bytes32 parametersHash, uint256 sampleSize);
-    event ModelAggregated(UD60x18[] globalModel);
-    event ResetForNextRound();
-    event ResetFederatedLearning();
-    event TrainingRoundsSet(uint256 rounds);
-    event GlobalModelSet(UD60x18[] newGlobalModel);
-    event ModelURIUpdated(string newModelURI, string newVersion);
-    event ConsistencyUpdated(address indexed client, int256 consistencyCount);
-    event ShapleyValuesUpdated(uint256 round, string cid);
-    event BonusDistributed(address indexed client, uint256 reward);
-    event FairnessCheckTriggered(uint256 round);
-    event AlignmentScoresUpdated(uint256 indexed round, address indexed client, int256 score);
 
+    event TrainingRoundsSet(uint32 rounds);
+    event ModelURIUpdated(string newURI, string newVersion);
+
+    event ConsistencyUpdated(address indexed client, int256 consistencyCount);
+
+    // --- MODIFIERS ---
     modifier onlyOwner() {
         require(msg.sender == owner, "Not authorized");
         _;
     }
 
     modifier validClient() {
-        require(!hasSubmitted[msg.sender], "Client has already submitted");
-        require(stakedAmounts[msg.sender] >= stakingRequirement, "Stake requirement not met");
+        require(!hasSubmitted[msg.sender], "Already submitted");
+        require(
+            stakedAmounts[msg.sender] >= stakingRequirement,
+            "Stake requirement not met"
+        );
         _;
     }
 
-    constructor(uint256 _totalClients, address _reputationTokenAddress) {
-        owner = msg.sender;
-        totalClients = _totalClients;
-        reputationToken = ReputationToken(_reputationTokenAddress);
+    mapping(address => uint256) public stakedAmounts;
+
+    // --- CONSTRUCTOR ---
+    constructor(uint32 _totalClients, address _reputationTokenAddress) {
+        owner            = msg.sender;
+        totalClients     = _totalClients;
+        reputationToken  = ReputationToken(_reputationTokenAddress);
     }
 
+    // --- 0) ADMIN FUNCTIONS ---
+    function setTrainingRounds(uint32 _rounds) external onlyOwner {
+        require(_rounds > 0, "Rounds>0");
+        trainingRounds = _rounds;
+        emit TrainingRoundsSet(_rounds);
+    }
+
+    function updateModelURI(string calldata _uri, string calldata _version)
+        external
+        onlyOwner
+    {
+        modelURI     = _uri;
+        modelVersion = _version;
+        emit ModelURIUpdated(_uri, _version);
+    }
+
+    // --- 1) STAKING ---
     function depositStake(uint256 amount) external {
-        require(amount >= stakingRequirement, "Stake requirement not met");
+        require(amount >= stakingRequirement, "Stake too low");
         stakedAmounts[msg.sender] += amount;
         emit StakeDeposited(msg.sender, amount);
     }
 
+    function withdrawStake(uint256 amount) external {
+        require(stakedAmounts[msg.sender] >= amount, "Not enough staked");
+        stakedAmounts[msg.sender] -= amount;
+        emit StakeWithdrawn(msg.sender, amount);
+    }
+
+    // --- 2) UTILITIES ---
     function calculateTotalSamples() internal view returns (SD59x18) {
-    SD59x18 totalSamples = sd(0);
-    for (uint256 i = 0; i < clients.length; i++) {
-        totalSamples = totalSamples.add(sd(int256(clientSampleSizes[clients[i]])));
-    }
-    return totalSamples;
-}
-
-    function submitModel(uint256[] memory parameters, uint256 sampleSize) public validClient {
-        uint256 paramLength = parameters.length;
-        require(paramLength > 0, "Parameters cannot be empty");
-        require(sampleSize > 0, "Sample size must be greater than zero");
-        console.log("numClients:", numClients);
-        console.log("totalClients:", totalClients);
-
-        if (!hasSubmitted[msg.sender]) {
-            clients.push(msg.sender);
-            hasSubmitted[msg.sender] = true;
+        SD59x18 total = sd(0);
+        for (uint32 i = 0; i < clients.length; i++) {
+            total = total.add(
+                sd(int256(clientSampleSizes[clients[i]]))
+            );
         }
-
-        UD60x18[] memory scaledParameters = new UD60x18[](parameters.length);
-        for (uint256 i = 0; i < paramLength; i++) {
-            scaledParameters[i] = UD60x18.wrap(parameters[i]);
-        }
-
-        clientUpdates[msg.sender] = scaledParameters;
-        clientSampleSizes[msg.sender] = sampleSize;
-        numClients++;
-
-        emit ModelSubmitted(msg.sender, keccak256(abi.encode(scaledParameters)), sampleSize);
-
-        // if (numClients == totalClients) {
-        //     aggregateModels();
-        // }
+        return total;
     }
 
-    function calculateAlignmentScore(address client) public returns (SD59x18) {
-        SD59x18 score = sd(0);
-        SD59x18 sampleSize = sd(int256(clientSampleSizes[client]));
+    // --- 3) CLIENT SUBMISSION (OFF‑CHAIN STORAGE) ---
+    /// @param paramsHash keccak256(abi.encodePacked(IPFS‑encoded JSON))
+    function submitModel(bytes32 paramsHash, uint256 sampleSize)
+        external
+        validClient
+    {
+        require(sampleSize > 0, "Samples>0");
 
-        // Use reusable function to calculate total samples
-        SD59x18 totalSamples = calculateTotalSamples();
-        require(totalSamples.unwrap() > 0, "Total samples must be greater than zero");
+        hasSubmitted[msg.sender]       = true;
+        paramsHashes[msg.sender]       = paramsHash;
+        clientSampleSizes[msg.sender]  = sampleSize;
+        clients.push(msg.sender);
+        numClients += 1;
 
-        // Cache client updates in memory
-        UD60x18[] memory updates = clientUpdates[client];
-        for (uint256 i = 0; i < updates.length; i++) {
-            int256 clientValue = int256(unwrap(updates[i]));
-            int256 globalValue = int256(unwrap(globalModel[i]));
-            score = score.add(sd(clientValue).mul(sd(globalValue)));
-        }
-
-        // Apply weighting based on sample size
-        score = score.mul(sampleSize).div(totalSamples);
-
-        // Update consistency count
-        consistencyCount[client] = consistencyCount[client].add(score);
-
-        // Emit combined event for alignment and consistency
-        emit AlignmentScoresUpdated(currentRound, client, score.unwrap());
-        emit ConsistencyUpdated(client, consistencyCount[client].unwrap());
-
-        return score;
+        emit ModelSubmitted(currentRound, msg.sender, paramsHash, sampleSize);
     }
 
-
-    /**
-     * @dev Accept off-chain computed Shapley values and link to IPFS CID.
-     * @param ipfsCid The IPFS CID where Shapley values are stored.
-     * @param clientAddresses List of client addresses.
-     * @param values List of Shapley values corresponding to the clients.
-     */
-    function updateFairnessData(string calldata ipfsCid, bytes32 computedHash, address[] calldata clientAddresses, uint256[] calldata values
-    ) external onlyOwner {
-        require(bytes(ipfsCid).length > 0, "CID cannot be empty");
-        require(clientAddresses.length == values.length, "Input length mismatch");
-
-        // Verify the hash for data integrity
+    // --- 4) ON‑CHAIN ALIGNMENT SCORE ---
+    /// @notice Runs dot(gᵢ, g_global) on‑chain with PRB‑Math
+    function calculateAlignmentScore(
+        address    client,
+        UD60x18[] calldata params
+    ) public {
+        require(hasSubmitted[client], "No submission");
         require(
-            keccak256(abi.encode(clientAddresses, values)) == computedHash,
-            "Hash mismatch"
+            keccak256(abi.encodePacked(params)) == paramsHashes[client],
+            "Param hash mismatch"
         );
 
-        // Store the IPFS CID for the current fairness round
-        currentShapleyRound++;
-        shapleyIPFSCIDs[currentShapleyRound] = ipfsCid;
+        SD59x18 totalSamples = calculateTotalSamples();
+        require(totalSamples.unwrap() > 0, "Zero total samples");
 
-        // Accumulate the Shapley values
-        for (uint256 i = 0; i < clientAddresses.length; i++) {
-            shapleyValues[clientAddresses[i]] += values[i];
+        uint256 L = params.length;
+        require(L == globalModel.length, "Length mismatch");
+
+        SD59x18 score = sd(0);
+        for (uint256 i; i < L; i++) {
+            int256 a = int256(unwrap(params[i]));
+            int256 b = int256(unwrap(globalModel[i]));
+            score = score.add(sd(a).mul(sd(b)));
         }
 
-        emit ShapleyValuesUpdated(currentShapleyRound, ipfsCid);
+        // scale by sampleSize / totalSamples
+        score = score.mul(
+            sd(int256(clientSampleSizes[client]))
+        ).div(totalSamples);
+
+        alignmentScores[client] = score;
+        roundAlignmentScores[currentRound][client] = unwrap(score);
+        emit AlignmentScoresUpdated(currentRound, client, unwrap(score));
     }
 
-
-
-    /**
-     * @dev Retrieve the CID for a specific Shapley computation round.
-     * @param round The round number.
-     */
-    function getShapleyCID(uint256 round) external view returns (string memory) {
-        return shapleyIPFSCIDs[round];
+    /// @notice Helper to calculate for all clients in one go
+    function calculateAlignmentScore_All(UD60x18[][] calldata allParams)
+        external
+    {
+        require(allParams.length == clients.length, "Param count mismatch");
+        for (uint32 i = 0; i < clients.length; i++) {
+            calculateAlignmentScore(clients[i], allParams[i]);
+        }
     }
 
-    /**
-     * @dev Allocate a portion of rewards to the bonus pool.
-     */
+    // --- 5) CONSISTENCY MULTIPLIERS ---
+    function updateAllMultipliers() public {
+        for (uint32 i = 0; i < clients.length; i++) {
+            address c = clients[i];
+            SD59x18 cnt = consistencyCount[c];
+            SD59x18 hi = sd(10 * 1e18);
+            SD59x18 lo = sd(5 * 1e18);
+            SD59x18 pen = sd(-5 * 1e18);
+
+            uint256 m;
+            if (cnt.gte(hi)) {
+                m = consistencyMultiplier + 10;
+            } else if (cnt.gte(lo)) {
+                m = consistencyMultiplier;
+            } else if (cnt.lt(pen)) {
+                m = 0;
+            } else if (cnt.unwrap() < 0) {
+                m = 90;
+            } else {
+                m = 100;
+            }
+
+            rewardMultipliers[c] = m;
+            emit ConsistencyUpdated(c, cnt.unwrap());
+        }
+    }
+
+    // --- 6) ON‑CHAIN AGGREGATION (FedAvg) ---
+    /// @notice Owner pushes all client arrays in one transaction
+    function aggregateModels(
+        UD60x18[][] calldata allParams,
+        uint256[]    calldata sampleSizes
+    ) external onlyOwner {
+        uint32 n = uint32(allParams.length);
+        require(n == clients.length, "Count mismatch");
+
+        SD59x18 total = sd(0);
+        for (uint32 i; i < n; i++) {
+            total = total.add(sd(int256(sampleSizes[i])));
+        }
+        require(total.unwrap() > 0, "No data");
+
+        uint256 M = allParams[0].length;
+        UD60x18[] memory agg = new UD60x18[](M);
+
+        for (uint32 i; i < n; i++) {
+            require(
+                keccak256(abi.encodePacked(allParams[i])) == paramsHashes[clients[i]],
+                "Integrity fail"
+            );
+            require(
+                sampleSizes[i] == clientSampleSizes[clients[i]],
+                "Size mismatch"
+            );
+
+            UD60x18 w = ud(sampleSizes[i])
+                .div(ud(uint256(total.unwrap())));
+
+            for (uint256 j; j < M; j++) {
+                agg[j] = agg[j].add(allParams[i][j].mul(w));
+            }
+        }
+
+        delete globalModel;
+        for (uint256 k; k < M; k++) {
+            globalModel.push(agg[k]);
+        }
+
+        emit ModelAggregated(agg);
+    }
+
+    // --- 7) OFF‑CHAIN FAIRNESS UPDATE ---
+    function updateFairnessData(
+        bytes32             ipfsHash,
+        bytes32             integrityHash,
+        address[] calldata  addrs,
+        uint256[] calldata  vals
+    ) external onlyOwner {
+        require(addrs.length == vals.length, "Len mismatch");
+        shapleyIPFSHashes[currentRound] = ipfsHash;
+        for (uint256 i; i < addrs.length; i++) {
+            shapleyValues[addrs[i]] = vals[i];
+        }
+        currentShapleyRound++;
+        emit FairnessCheckTriggered(currentRound);
+        lastFairnessCheckRound = currentRound;
+    }
+
+    // --- 8) BONUS & BASE REWARDS ---
     function allocateToBonusPool(uint256 amount) internal {
         bonusRewardPool += amount;
     }
 
     function fundBonusPool(uint256 amount) external onlyOwner {
-        require(amount > 0, "Amount must be greater than zero");
+        require(amount > 0, "Must be >0");
         bonusRewardPool += amount;
     }
 
-
-    function aggregateModels() public {
-        console.log("Entering aggregateModels");
-        uint256 paramCount = clientUpdates[clients[0]].length;
-        //console.log("Passed");
-        UD60x18[] memory aggregatedParams = new UD60x18[](paramCount);
-        // Use reusable function to calculate total samples
-        SD59x18 totalSamples = calculateTotalSamples();
-        require(totalSamples.unwrap() > 0, "Total samples must be greater than zero");
-
-         // Aggregate parameters from all clients
-        for (uint256 i = 0; i < clients.length; i++) {
-            address client = clients[i];
-            UD60x18[] memory clientParams = clientUpdates[client];
-            uint256 clientSampleSize = clientSampleSizes[client];
-
-            for (uint256 j = 0; j < clientParams.length; j++) {
-                // Cast totalSamples to uint256 to match ud() requirements
-                UD60x18 weight = ud(clientSampleSize).div(ud(uint256(totalSamples.unwrap())));
-                aggregatedParams[j] = aggregatedParams[j].add(clientParams[j].mul(weight));
-            }
-        }
-        
-        // Update the global model
-        globalModel = aggregatedParams;
-        emit ModelAggregated(globalModel);
-
-        // Automatically distribute rewards
-        //baseDistributeRewards();
-
-        // Check consistency and update multipliers every few rounds
-        if (currentRound >= lastConsistencyCheckRound + consistencyCheckInterval) {
-            updateAllMultipliers();
-            lastConsistencyCheckRound = currentRound;
-        }
-        // Trigger fairness check if due
-        if (currentRound % fairnessCheckInterval == 0) {
-            lastFairnessCheckRound = currentRound;
-            emit FairnessCheckTriggered(currentRound);
-        }
-
-        currentRound++;
-        if (currentRound < trainingRounds) {
-            resetForNextRound();
-        } else {
-            emit ResetFederatedLearning();
-        }
-    }
-
-    function calculateAlignmentScore_All() public{
-        for (uint256 i = 0; i < clients.length; i++) {
-            address client = clients[i];
-            alignmentScores[client] = calculateAlignmentScore(client);
-        }
-    }
-
-    function updateAllMultipliers() internal {
-        for (uint256 i = 0; i < clients.length; i++) {
-            address client = clients[i];
-            SD59x18 consistency = consistencyCount[client];
-            SD59x18 highThreshold = sd(10 * 1e18); // High threshold for boosted multiplier
-            SD59x18 lowThreshold = sd(5 * 1e18);   // Standard consistency threshold
-            SD59x18 severePenaltyThreshold = sd(-5 * 1e18); // Severe penalty threshold
-
-            // Assign multipliers based on the consistency count
-            if (consistency.gte(highThreshold)) {
-                rewardMultipliers[client] = consistencyMultiplier + 10; // Boosted multiplier for very high consistency
-            } else if (consistency.gte(lowThreshold)) {
-                rewardMultipliers[client] = consistencyMultiplier; // Standard consistency multiplier
-            } else if (consistency.lt(severePenaltyThreshold)) {
-                rewardMultipliers[client] = 0; // Severe penalty for very low consistency
-            } else if (consistency.unwrap() < 0) {
-                rewardMultipliers[client] = 90; // Reduced multiplier for poor consistency
-            } else {
-                rewardMultipliers[client] = 100; // Default multiplier
-            }
-
-            emit ConsistencyUpdated(client, consistency.unwrap());
-        }
-    }
-
-
-    function baseDistributeRewards() public {
-        for (uint256 i = 0; i < clients.length; i++) {
-            address client = clients[i];
-            SD59x18 score = alignmentScores[client];
-            SD59x18 multiplier = rewardMultipliers[client] > 0
-                ? sd(int256(rewardMultipliers[client]))
+    /// @notice Distribute per‑round on‑chain rewards
+    function baseDistributeRewards() external {
+        for (uint32 i = 0; i < clients.length; i++) {
+            address c = clients[i];
+            SD59x18 score = alignmentScores[c];
+            SD59x18 mult  = rewardMultipliers[c] > 0
+                ? sd(int256(rewardMultipliers[c]))
                 : sd(100);
 
-            // Calculate reward using SD59x18
-            SD59x18 scaledBaseReward = sd(int256(baseReward));
-            SD59x18 scaledReward = scaledBaseReward.mul(score).mul(multiplier).div(sd(10000));
+            SD59x18 r = sd(int256(baseReward))
+                .mul(score)
+                .mul(mult)
+                .div(sd(10000));
 
-            // Ensure reward is non-negative and fits in uint256
-            uint256 reward = scaledReward.unwrap() > 0 ? uint256(scaledReward.unwrap()) : 0;
-
-            // Mint the reward to the client
-            reputationToken.mint(client, reward);
-            emit RewardDistributed(client, reward);
-
-            // Reset alignment score for the next round
-            alignmentScores[client] = sd(0);
+            uint256 reward = r.unwrap() > 0 ? uint256(r.unwrap()) : 0;
+            reputationToken.mint(c, reward);
+            emit RewardDistributed(c, reward);
+            alignmentScores[c] = sd(0);
         }
     }
-
-
-
 
     function distributeBonusRewardsAfterFairness() external onlyOwner {
-        require(currentShapleyRound > lastFairnessCheckRound, "No new fairness data");
-        uint256 totalShapley = 0;
-
-        // Calculate total Shapley value
-        for (uint256 i = 0; i < clients.length; i++) {
-            totalShapley += shapleyValues[clients[i]];
+        require(currentShapleyRound > lastFairnessCheckRound, "No new fairness");
+        uint256 tot;
+        for (uint32 i = 0; i < clients.length; i++) {
+            tot += shapleyValues[clients[i]];
         }
-        require(totalShapley > 0, "No Shapley values to distribute");
+        require(tot > 0, "No shapley data");
 
-        // Distribute rewards proportionally
-        for (uint256 i = 0; i < clients.length; i++) {
-            address client = clients[i];
-            uint256 clientShare = (bonusRewardPool * shapleyValues[client]) / totalShapley;
-            if (clientShare > 0) {
-                reputationToken.mint(client, clientShare);
-                emit BonusDistributed(client, clientShare);
+        for (uint32 i = 0; i < clients.length; i++) {
+            address c = clients[i];
+            uint256 share = (bonusRewardPool * shapleyValues[c]) / tot;
+            if (share > 0) {
+                reputationToken.mint(c, share);
+                emit BonusDistributed(c, share);
             }
         }
-
-        bonusRewardPool = 0; // Reset bonus pool
+        bonusRewardPool = 0;
     }
 
-    function resetForNextRound() internal {
-        for (uint256 i = 0; i < clients.length; i++) {
-            address client = clients[i];
-            hasSubmitted[client] = false;
-            delete clientUpdates[client];
-            delete clientSampleSizes[client];
+    // --- 9) RESET FOR NEXT ROUND ---
+    function resetForNextRound() external onlyOwner {
+        for (uint32 i; i < clients.length; i++) {
+            delete hasSubmitted[clients[i]];
+            delete paramsHashes[clients[i]];
+            delete clientSampleSizes[clients[i]];
+            delete alignmentScores[clients[i]];
+            delete rewardMultipliers[clients[i]];
+            delete consistencyCount[clients[i]];
         }
-        numClients = 0;
         delete clients;
+        numClients            = 0;
         emit ResetForNextRound();
     }
 
-    function getGlobalModel() public view returns (UD60x18[] memory) {
+    function resetRound() external onlyOwner {
+        currentRound += 1;
+        emit ResetRound(currentRound);
+    }
+
+    // --- 10) ACCESSORS ---
+    function getGlobalModel() external view returns (UD60x18[] memory) {
         return globalModel;
     }
 
-    function setTotalClients(uint256 _totalClients) public onlyOwner {
-        totalClients = _totalClients;
+    function setTotalClients(uint32 _tc) external onlyOwner {
+        totalClients = _tc;
     }
-
-    function setTrainingRounds(uint256 _rounds) public onlyOwner {
-        require(_rounds > 0, "Training rounds must be greater than zero");
-        trainingRounds = _rounds;
-        emit TrainingRoundsSet(_rounds);
-    }
-
-    function resetFederatedLearning() public onlyOwner {
-        delete globalModel;
-        numClients = 0;
-        currentRound = 0;
-        for (uint256 i = 0; i < clients.length; i++) {
-            address client = clients[i];
-            hasSubmitted[client] = false;
-            delete clientUpdates[client];
-            delete clientSampleSizes[client];
-        }
-        delete clients;
-        emit ResetFederatedLearning();
-    }
-
-
 }
