@@ -1,61 +1,54 @@
 import random
 import torch
+import json
+from web3 import Web3
+from ..smart_contract.IPFS.upload_parameters import upload_params_to_ipfs
 
-def get_clients_this_round(fed_args, round):
-    if (fed_args.fed_alg).startswith('local'):
-        clients_this_round = [int((fed_args.fed_alg)[-1])]
-    else:
-        if fed_args.num_clients < fed_args.sample_clients:
-            clients_this_round = list(range(fed_args.num_clients))
-        else:
-            random.seed(round)
-            clients_this_round = sorted(random.sample(range(fed_args.num_clients), fed_args.sample_clients))
-    return clients_this_round
+# === On-Chain Contract Setup ===
+INFURA_URL       = "http://127.0.0.1:8545"
+CONTRACT_ADDRESS = "ContractAddress"
+ABI_PATH         = "../smart_contract/out/FedLLM.sol/FederatedLearningAggregator.json"
 
-def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, proxy_dict=None, opt_proxy_dict=None, auxiliary_info=None):
-    sample_this_round = sum([sample_num_list[client] for client in clients_this_round])
-    global_auxiliary = None
+w3 = Web3(Web3.HTTPProvider(INFURA_URL))
+with open(ABI_PATH) as f:
+    abi = json.load(f)
+contract = w3.eth.contract(
+    address=Web3.toChecksumAddress(CONTRACT_ADDRESS),
+    abi=abi
+)
 
-    if fed_args.fed_alg == 'scaffold':
-        for key in global_dict.keys():
-            global_dict[key] = sum([local_dict_list[client][key] * sample_num_list[client] / sample_this_round for client in clients_this_round])
-        global_auxiliary, auxiliary_delta_dict = auxiliary_info
-        for key in global_auxiliary.keys():
-            delta_auxiliary = sum([auxiliary_delta_dict[client][key] for client in clients_this_round]) 
-            global_auxiliary[key] += delta_auxiliary / fed_args.num_clients
-    
-    elif fed_args.fed_alg == 'fedavgm':
-        # Momentum-based FedAvg
-        for key in global_dict.keys():
-            delta_w = sum([(local_dict_list[client][key] - global_dict[key]) * sample_num_list[client] / sample_this_round for client in clients_this_round])
-            proxy_dict[key] = fed_args.fedopt_beta1 * proxy_dict[key] + (1 - fed_args.fedopt_beta1) * delta_w if round_idx > 0 else delta_w
-            global_dict[key] = global_dict[key] + proxy_dict[key]
 
-    elif fed_args.fed_alg == 'fedadagrad':
-        for key, param in opt_proxy_dict.items():
-            delta_w = sum([(local_dict_list[client][key] - global_dict[key]) for client in clients_this_round]) / len(clients_this_round)
-            # In paper 'adaptive federated optimization', momentum is not used
-            proxy_dict[key] = delta_w
-            opt_proxy_dict[key] = param + torch.square(proxy_dict[key])
-            global_dict[key] += fed_args.fedopt_eta * torch.div(proxy_dict[key], torch.sqrt(opt_proxy_dict[key])+fed_args.fedopt_tau)
+def get_clients_this_round(fed_args, round_idx):
+    """
+    Select clients for this round.
+    """
+    if fed_args.fed_alg.startswith('local'):
+        return [int(fed_args.fed_alg[-1])]
+    if fed_args.num_clients <= fed_args.sample_clients:
+        return list(range(fed_args.num_clients))
+    random.seed(round_idx)
+    return sorted(random.sample(range(fed_args.num_clients), fed_args.sample_clients))
 
-    elif fed_args.fed_alg == 'fedyogi':
-        for key, param in opt_proxy_dict.items():
-            delta_w = sum([(local_dict_list[client][key] - global_dict[key]) for client in clients_this_round]) / len(clients_this_round)
-            proxy_dict[key] = fed_args.fedopt_beta1 * proxy_dict[key] + (1 - fed_args.fedopt_beta1) * delta_w if round_idx > 0 else delta_w
-            delta_square = torch.square(proxy_dict[key])
-            opt_proxy_dict[key] = param - (1-fed_args.fedopt_beta2)*delta_square*torch.sign(param - delta_square)
-            global_dict[key] += fed_args.fedopt_eta * torch.div(proxy_dict[key], torch.sqrt(opt_proxy_dict[key])+fed_args.fedopt_tau)
 
-    elif fed_args.fed_alg == 'fedadam':
-        for key, param in opt_proxy_dict.items():
-            delta_w = sum([(local_dict_list[client][key] - global_dict[key]) for client in clients_this_round]) / len(clients_this_round)
-            proxy_dict[key] = fed_args.fedopt_beta1 * proxy_dict[key] + (1 - fed_args.fedopt_beta1) * delta_w if round_idx > 0 else delta_w
-            opt_proxy_dict[key] = fed_args.fedopt_beta2*param + (1-fed_args.fedopt_beta2)*torch.square(proxy_dict[key])
-            global_dict[key] += fed_args.fedopt_eta * torch.div(proxy_dict[key], torch.sqrt(opt_proxy_dict[key])+fed_args.fedopt_tau)
+def global_aggregate(*args, **kwargs):
+    """
+    Stub: Aggregation is now handled on-chain via IPFS and smart contracts.
+    Calling this will raise an error to prevent local aggregation.
+    """
+    raise RuntimeError(
+        "Off-chain aggregation enabled: call on-chain FederatedLearningAggregator instead."
+    )
 
-    else:   # Normal dataset-size-based aggregation 
-        for key in global_dict.keys():
-            global_dict[key] = sum([local_dict_list[client][key] * sample_num_list[client] / sample_this_round for client in clients_this_round])
-    
-    return global_dict, global_auxiliary
+
+def fetch_global_model(global_dict):
+    """
+    Pull the updated global model from-chain and deserialize back into tensors.
+    """
+    # raw list of uint256 (UD60x18-scaled) from contract
+    raw = contract.functions.getGlobalModel().call()
+    keys = list(global_dict.keys())
+    for i, key in enumerate(keys):
+        # scale back down by 1e18
+        val = raw[i] / 1e18
+        global_dict[key] = torch.tensor(val).reshape(global_dict[key].shape)
+    return global_dict
