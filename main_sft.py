@@ -11,6 +11,8 @@ from utils import *
 from federated_learning import *
 from config import get_config, save_config, get_model_config, get_training_args
 
+from federated_learning.fed_global import fetch_global_model, convert_to_state_dict
+
 # ===== Define the arguments =====
 script_args, fed_args, peft_config = get_config()
 training_args = get_training_args(script_args, script_args.learning_rate)
@@ -111,12 +113,9 @@ for round in tqdm(range(fed_args.num_rounds)):
         local_dict_list[client] = copy.deepcopy(get_peft_model_state_dict(model))   # copy is needed!
 
     # ===== Server aggregates the local models =====
-    global_dict, global_auxiliary = global_aggregate(
-        fed_args, global_dict, local_dict_list, sample_num_list, \
-        clients_this_round, round, proxy_dict=proxy_dict, \
-        opt_proxy_dict=opt_proxy_dict, auxiliary_info=(global_auxiliary, auxiliary_delta_dict)
-    )
-    set_peft_model_state_dict(model, global_dict)   # Update global model
+    raw_params = fetch_global_model(fed_args.rpc_url, fed_args.contract_addr, fed_args.abi_path)
+    global_dict = convert_to_state_dict(raw_params, global_dict)
+    set_peft_model_state_dict(model, global_dict)
 
     # ===== Save the model =====
     if (round+1) % fed_args.save_model_freq == 0:
